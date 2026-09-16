@@ -93,6 +93,21 @@ private func someFrames() -> [AudioFrame] {
   [AudioFrame(samples: [Float](repeating: 0.1, count: 1_600), sampleRate: 16_000)]
 }
 
+private final class OutcomeCollector: @unchecked Sendable {
+  private let lock = NSLock()
+  private var outcomes: [DictationOutcome] = []
+  func append(_ outcome: DictationOutcome) {
+    lock.lock()
+    outcomes.append(outcome)
+    lock.unlock()
+  }
+  var all: [DictationOutcome] {
+    lock.lock()
+    defer { lock.unlock() }
+    return outcomes
+  }
+}
+
 // MARK: - Tests
 
 @Suite("DictationController")
@@ -268,6 +283,26 @@ struct DictationControllerTests {
     await controller.finishRecording(frames: someFrames())
     let records = await store.records
     #expect(records.count == 2)
+  }
+
+  @Test("Outcome observer reports the insertion method and word count")
+  func outcomeObserver() async throws {
+    let store = FakeStore()
+    let recorder = Recorder()
+    let controller = makeController(
+      store: store, recorder: recorder, insertOutcome: { _ in .noFocusedField })
+    let outcomes = OutcomeCollector()
+    await controller.setOutcomeObserver { outcome in
+      outcomes.append(outcome)
+    }
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    let collected = outcomes.all
+    #expect(collected.count == 1)
+    let outcome = try #require(collected.first)
+    #expect(outcome.insertionMethod == .historyOnly)
+    #expect(outcome.wordCount == 2)
+    #expect(outcome.failureMessage == nil)
   }
 
   @Test("Empty audio fails cleanly without a history row")

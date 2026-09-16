@@ -30,6 +30,14 @@ public struct DictationDependencies: Sendable {
   }
 }
 
+/// How a finished dictation landed — what the indicator needs to say
+/// "inserted" vs "saved to history, copied to clipboard".
+public struct DictationOutcome: Equatable, Sendable {
+  public let insertionMethod: InsertionMethod
+  public let wordCount: Int
+  public let failureMessage: String?
+}
+
 /// Orchestrates one dictation from hotkey to history row. The invariant this
 /// actor exists to defend: once a transcript exists, it is never lost — every
 /// failure path lands it in history, and every non-secure failure path also
@@ -44,6 +52,7 @@ public actor DictationController {
   private var cleanupEnabled = true
   private var hints: @Sendable () async -> [String] = { [] }
   private var onStateChange: @Sendable (DictationState) -> Void = { _ in }
+  private var onOutcome: @Sendable (DictationOutcome) -> Void = { _ in }
 
   public var state: DictationState { machine.state }
 
@@ -73,6 +82,11 @@ public actor DictationController {
   public func setStateObserver(_ observer: @escaping @Sendable (DictationState) -> Void) {
     onStateChange = observer
     observer(machine.state)
+  }
+
+  /// Observer for finished dictations; called once per stored record.
+  public func setOutcomeObserver(_ observer: @escaping @Sendable (DictationOutcome) -> Void) {
+    onOutcome = observer
   }
 
   /// Warm the engine so the first hotkey press pays no initialization cost.
@@ -194,6 +208,11 @@ public actor DictationController {
       insertionMethod: insertionMethod,
       processingMs: processingMs)
     try? await store.insert(record)
+    onOutcome(
+      DictationOutcome(
+        insertionMethod: insertionMethod,
+        wordCount: record.wordCount,
+        failureMessage: failureMessage))
 
     if let failureMessage {
       try? machine.apply(.fail(failureMessage))
