@@ -28,6 +28,14 @@ final class AppCoordinator {
   private(set) var parakeetInstalled = false
   private(set) var parakeetDownloadFraction: Double?
   private(set) var engineChoice: EngineID = .apple
+  // Polish / language model
+  private var languageProvider: LanguageModelProvider?
+  private var modelManager: LocalModelManager?
+  private(set) var polishModel: ModelDescriptor?
+  private(set) var polishModelInstalled = false
+  private(set) var polishDownloadFraction: Double?
+  private(set) var polishAvailable = false
+  private var polishInFlight = false
   private let inserter = MacOSTextInserter()
   private let permissions = PermissionManager()
   private let capture = MicrophoneCapture()
@@ -67,6 +75,7 @@ final class AppCoordinator {
       await attachObservers(to: controller)
 
       installHotkeys()
+      await buildLanguageProvider(paths: paths, store: store)
 
       // Pre-warm off the critical path so cold launch → ready stays fast.
       Task.detached(priority: .utility) {
@@ -125,14 +134,14 @@ final class AppCoordinator {
   func installParakeet() {
     guard let parakeetEngine, parakeetDownloadFraction == nil else { return }
     parakeetDownloadFraction = 0
-    indicator.display = .downloading(percent: 0)
+    indicator.display = .downloading(what: "Parakeet", percent: 0)
     indicatorPanel?.show()
     Task {
       do {
         try await parakeetEngine.install { [weak self] fraction in
           Task { @MainActor in
             self?.parakeetDownloadFraction = fraction
-            self?.indicator.display = .downloading(percent: Int(fraction * 100))
+            self?.indicator.display = .downloading(what: "Parakeet", percent: Int(fraction * 100))
           }
         }
         parakeetInstalled = true
@@ -160,6 +169,137 @@ final class AppCoordinator {
     Task.detached(priority: .utility) { await controller.prewarm() }
   }
 
+  // MARK: - Polish / language model
+
+  /// Builds the provider once. LlamaServerHost spawns nothing until the first
+  /// polish, so this costs no model memory at startup.
+  private func buildLanguageProvider(paths: ApplicationPaths, store: FlowStore) async {
+    let manager = LocalModelManager(modelsDirectory: paths.models)
+    modelManager = manager
+
+    // The model in use: saved choice, else the hardware-fit recommendation.
+    let saved = try? await store.setting(forKey: "language_model")
+    let descriptor =
+      saved.flatMap { DefaultModelCatalog.descriptor(id: $0) }
+      ?? SetupAdvisor.largestRunnableLanguageModel(on: .current())
+    guard let descriptor else { return }
+    polishModel = descriptor
+    let modelURL = await manager.modelURL(for: descriptor)
+    polishModelInstalled = FileManager.default.fileExists(atPath: modelURL.path)
+
+    guard let serverURL = Self.runtimeExecutable(named: "llama-server", paths: paths),
+      let cliURL = Self.runtimeExecutable(named: "llama-cli", paths: paths)
+    else {
+      Self.log.warning("llama runtimes not found; polish disabled")
+      return
+    }
+    let host = LlamaServerHost(
+      configuration: LlamaServerHost.Configuration(
+        executableURL: serverURL,
+        modelURL: modelURL,
+        modelIdentifier: descriptor.id,
+        idleTimeout: 300,
+        diagnosticsDirectory: paths.diagnostics))
+    languageProvider = LanguageModelProvider(
+      host: host, cliExecutableURL: cliURL, modelURL: modelURL)
+    polishAvailable = polishModelInstalled
+  }
+
+  /// Release builds only run the Gatekeeper-validated binary sealed inside
+  /// the signed bundle. The Application Support fallback is a debug-only
+  /// convenience — executing a binary from a user-writable directory must
+  /// never happen in a shipped build.
+  private static func runtimeExecutable(named name: String, paths: ApplicationPaths) -> URL? {
+    if let resources = Bundle.main.resourceURL {
+      let bundled = resources.appendingPathComponent("Runtimes/\(name)")
+      if FileManager.default.isExecutableFile(atPath: bundled.path) { return bundled }
+    }
+    #if DEBUG
+      let fallback = paths.runtimes.appendingPathComponent(name)
+      if FileManager.default.isExecutableFile(atPath: fallback.path) { return fallback }
+    #endif
+    return nil
+  }
+
+  /// Explicit, user-invoked language model download.
+  func installPolishModel() {
+    guard let modelManager, let descriptor = polishModel, polishDownloadFraction == nil
+    else { return }
+    polishDownloadFraction = 0
+    indicator.display = .downloading(what: descriptor.displayName, percent: 0)
+    indicatorPanel?.show()
+    Task {
+      await modelManager.setProgressObserver { [weak self] _, state in
+        guard case .downloading(let received, let total) = state, total > 0 else { return }
+        let fraction = Double(received) / Double(total)
+        Task { @MainActor in
+          self?.polishDownloadFraction = fraction
+          self?.indicator.display = .downloading(
+            what: descriptor.displayName, percent: Int(fraction * 100))
+        }
+      }
+      do {
+        try await modelManager.install(descriptor)
+        polishDownloadFraction = nil
+        polishModelInstalled = true
+        polishAvailable = languageProvider != nil
+        try? await store?.setSetting(descriptor.id, forKey: "language_model")
+        indicator.display = .success(words: 0)
+        scheduleIndicatorHide(after: .seconds(1.2))
+      } catch {
+        Self.log.error("model install failed: \(error)")
+        polishDownloadFraction = nil
+        indicator.display = .error("Model download failed")
+        scheduleIndicatorHide(after: .seconds(2.5))
+      }
+    }
+  }
+
+  /// Style hotkey pressed: polish the current selection in place.
+  func polishSelection(action: HotkeyAction) {
+    guard let slot = action.styleSlot else { return }
+    guard !polishInFlight else { return }
+    guard let languageProvider, polishModelInstalled else {
+      indicator.display = .error("Polish needs the language model — install it from the menu bar")
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(2.5))
+      return
+    }
+    polishInFlight = true
+    Task {
+      defer { polishInFlight = false }
+      guard let style = try? await store?.style(forSlot: slot) else {
+        indicator.display = .error("No style bound to that key")
+        indicatorPanel?.show()
+        scheduleIndicatorHide(after: .seconds(2))
+        return
+      }
+      indicator.display = .polishing(style: style.name)
+      indicatorPanel?.show()
+
+      let inserter = self.inserter
+      let engine = PolishEngine(
+        model: languageProvider,
+        readSelection: { await MainActor.run { SelectionReader.selectedText() } },
+        replaceSelection: { text in
+          await MainActor.run { inserter.captureTarget() }
+          return try await inserter.insert(text, replacingSelection: true, pressEnter: false)
+        })
+      let outcome = await engine.polish(style: style)
+      switch outcome {
+      case .replaced:
+        indicator.display = .success(words: 0)
+        scheduleIndicatorHide(after: .seconds(1.2))
+      case .noSelection:
+        indicator.display = .error("Select some text first")
+        scheduleIndicatorHide(after: .seconds(2))
+      case .failed(let message):
+        indicator.display = .error(message)
+        scheduleIndicatorHide(after: .seconds(2.5))
+      }
+    }
+  }
+
   // MARK: - Hotkeys
 
   private func installHotkeys() {
@@ -169,7 +309,8 @@ final class AppCoordinator {
       onHoldUp: { [weak self] in self?.endDictation() },
       onToggle: { [weak self] in self?.toggleDictation() },
       onCancel: { [weak self] in self?.cancelDictation() },
-      onChordAbort: { [weak self] in self?.cancelDictation() })
+      onChordAbort: { [weak self] in self?.cancelDictation() },
+      onStyle: { [weak self] action in self?.polishSelection(action: action) })
     monitor.install()
     hotkeyMonitor = monitor
   }

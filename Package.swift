@@ -32,6 +32,7 @@ let package = Package(
                 "MynaFlowCore",
                 .product(name: "FluidAudio", package: "FluidAudio"),
             ],
+            exclude: ["Resources"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("ServiceManagement"),

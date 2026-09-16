@@ -54,6 +54,17 @@ public struct DictationRecord: Identifiable, Codable, Equatable, Sendable {
   }
 }
 
+/// One before/after pair guiding a custom style's rewrites.
+public struct StyleExample: Codable, Equatable, Sendable {
+  public var input: String
+  public var output: String
+
+  public init(input: String, output: String) {
+    self.input = input
+    self.output = output
+  }
+}
+
 public struct Style: Identifiable, Codable, Equatable, Sendable {
   public let id: UUID
   public var name: String
@@ -61,6 +72,7 @@ public struct Style: Identifiable, Codable, Equatable, Sendable {
   public let builtin: Bool
   /// 1...5, or nil when the style has no hotkey.
   public var hotkeySlot: Int?
+  public var examples: [StyleExample]
   public let createdAt: Date
 
   public init(
@@ -69,6 +81,7 @@ public struct Style: Identifiable, Codable, Equatable, Sendable {
     prompt: String,
     builtin: Bool = false,
     hotkeySlot: Int? = nil,
+    examples: [StyleExample] = [],
     createdAt: Date = Date()
   ) {
     self.id = id
@@ -76,6 +89,7 @@ public struct Style: Identifiable, Codable, Equatable, Sendable {
     self.prompt = prompt
     self.builtin = builtin
     self.hotkeySlot = hotkeySlot
+    self.examples = examples
     self.createdAt = createdAt
   }
 }

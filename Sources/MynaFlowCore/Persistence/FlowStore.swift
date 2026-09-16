@@ -99,18 +99,72 @@ public actor FlowStore {
 
   public func styles() throws -> [Style] {
     try query(
-      "SELECT id, name, prompt, builtin, hotkey_slot, created_at FROM styles ORDER BY created_at",
+      """
+      SELECT id, name, prompt, builtin, hotkey_slot, created_at, examples
+      FROM styles ORDER BY created_at
+      """,
       bind: { _ in },
-      row: { statement in
-        Style(
-          id: UUID(uuidString: columnText(statement, 0) ?? "") ?? UUID(),
-          name: columnText(statement, 1) ?? "",
-          prompt: columnText(statement, 2) ?? "",
-          builtin: sqlite3_column_int(statement, 3) != 0,
-          hotkeySlot: sqlite3_column_type(statement, 4) == SQLITE_NULL
-            ? nil : Int(sqlite3_column_int(statement, 4)),
-          createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 5)))
+      row: Self.readStyle)
+  }
+
+  /// The style bound to a hotkey slot (1–5), if any.
+  public func style(forSlot slot: Int) throws -> Style? {
+    try query(
+      """
+      SELECT id, name, prompt, builtin, hotkey_slot, created_at, examples
+      FROM styles WHERE hotkey_slot = ?1 LIMIT 1
+      """,
+      bind: { sqlite3_bind_int($0, 1, Int32(slot)) },
+      row: Self.readStyle
+    ).first
+  }
+
+  /// Insert or update by id.
+  public func saveStyle(_ style: Style) throws {
+    let examples =
+      String(data: (try? JSONEncoder().encode(style.examples)) ?? Data("[]".utf8), encoding: .utf8)
+      ?? "[]"
+    try run(
+      """
+      INSERT INTO styles (id, name, prompt, builtin, hotkey_slot, created_at, examples)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+      ON CONFLICT(id) DO UPDATE SET
+        name = ?2, prompt = ?3, hotkey_slot = ?5, examples = ?7
+      """,
+      bind: { statement in
+        sqlite3_bind_text(statement, 1, style.id.uuidString, -1, sqliteTransient)
+        sqlite3_bind_text(statement, 2, style.name, -1, sqliteTransient)
+        sqlite3_bind_text(statement, 3, style.prompt, -1, sqliteTransient)
+        sqlite3_bind_int(statement, 4, style.builtin ? 1 : 0)
+        if let slot = style.hotkeySlot {
+          sqlite3_bind_int(statement, 5, Int32(slot))
+        } else {
+          sqlite3_bind_null(statement, 5)
+        }
+        sqlite3_bind_double(statement, 6, style.createdAt.timeIntervalSince1970)
+        sqlite3_bind_text(statement, 7, examples, -1, sqliteTransient)
       })
+  }
+
+  public func deleteStyle(id: UUID) throws {
+    try run(
+      "DELETE FROM styles WHERE id = ?1",
+      bind: { sqlite3_bind_text($0, 1, id.uuidString, -1, sqliteTransient) })
+  }
+
+  private static func readStyle(_ statement: OpaquePointer) -> Style {
+    let examplesJSON = columnText(statement, 6) ?? "[]"
+    let examples =
+      (try? JSONDecoder().decode([StyleExample].self, from: Data(examplesJSON.utf8))) ?? []
+    return Style(
+      id: UUID(uuidString: columnText(statement, 0) ?? "") ?? UUID(),
+      name: columnText(statement, 1) ?? "",
+      prompt: columnText(statement, 2) ?? "",
+      builtin: sqlite3_column_int(statement, 3) != 0,
+      hotkeySlot: sqlite3_column_type(statement, 4) == SQLITE_NULL
+        ? nil : Int(sqlite3_column_int(statement, 4)),
+      examples: examples,
+      createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 5)))
   }
 
   // MARK: - Open + migrations
@@ -190,7 +244,11 @@ public actor FlowStore {
       )
       """,
       "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
-    ]
+    ],
+    // v2: custom styles carry optional example input/output pairs (JSON).
+    [
+      "ALTER TABLE styles ADD COLUMN examples TEXT NOT NULL DEFAULT '[]'"
+    ],
   ]
 
   private func migrate() throws {

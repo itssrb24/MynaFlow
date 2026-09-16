@@ -68,6 +68,16 @@ struct MenuBarMenu: View {
       }
     }
     Divider()
+    if coordinator.polishModelInstalled {
+      Text("Polish ready — select text, press ⌃⌥1/2/3")
+    } else if let fraction = coordinator.polishDownloadFraction {
+      Text("Downloading polish model… \(Int(fraction * 100))%")
+    } else if let model = coordinator.polishModel {
+      Button("Install Polish Model (\(model.displayName), \(model.sizeLabel))") {
+        coordinator.installPolishModel()
+      }
+    }
+    Divider()
     Button("Quit Myna Flow") {
       NSApplication.shared.terminate(nil)
     }

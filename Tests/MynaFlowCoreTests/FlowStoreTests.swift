@@ -33,12 +33,12 @@ struct FlowStoreTests {
     )
   }
 
-  @Test("Opening a fresh store migrates to schema v1 and sets 0600 permissions")
+  @Test("Opening a fresh store migrates to the latest schema and sets 0600 permissions")
   func freshStoreMigratesAndProtectsFile() async throws {
     let url = temporaryDatabaseURL()
     let store = try await FlowStore.open(at: url)
     let version = await store.schemaVersion()
-    #expect(version == 1)
+    #expect(version == 2)
 
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     let permissions = try #require(attributes[.posixPermissions] as? NSNumber)

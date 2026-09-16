@@ -11,7 +11,8 @@ enum IndicatorDisplay: Equatable {
   /// success.
   case clipboardFallback
   case error(String)
-  case downloading(percent: Int)
+  case downloading(what: String, percent: Int)
+  case polishing(style: String)
 
   enum RecordingMode: Equatable {
     case hold
@@ -190,14 +191,20 @@ struct IndicatorView: View {
           .lineLimit(2)
       }
       .padding(.horizontal, 14)
-    case .downloading(let percent):
+    case .downloading(let what, let percent):
       HStack(spacing: 10) {
         ProgressView(value: Double(percent), total: 100)
           .frame(width: 90)
-        Text("Downloading Parakeet · \(percent)%")
+        Text("Downloading \(what) · \(percent)%")
           .font(.system(size: 12, weight: .medium))
       }
       .padding(.horizontal, 14)
+    case .polishing(let style):
+      HStack(spacing: 10) {
+        ProgressView().controlSize(.small)
+        Text("Polishing — \(style)")
+          .font(.system(size: 13, weight: .medium))
+      }
     }
   }
 
