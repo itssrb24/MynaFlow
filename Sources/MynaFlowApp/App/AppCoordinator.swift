@@ -65,6 +65,8 @@ final class AppCoordinator {
   private static let toggleMaximumDuration: Duration = .seconds(600)
   private var lastOutcome: DictationOutcome?
 
+  private let launchedAt = Date()
+
   func start() async {
     indicatorPanel = IndicatorPanelController(model: indicator)
     do {
@@ -113,6 +115,10 @@ final class AppCoordinator {
         await controller.prewarm()
       }
       await refreshRecentDictations()
+      refreshPermissions()
+      needsOnboarding = (try? await store.setting(forKey: "onboarded")) == nil
+      let readyMs = Int(Date().timeIntervalSince(self.launchedAt) * 1000)
+      Self.log.info("ready in \(readyMs) ms")
     } catch {
       Self.log.error("startup failed: \(error)")
       indicator.display = .error("Startup failed: \(error.localizedDescription)")
@@ -175,8 +181,61 @@ final class AppCoordinator {
   private func watchForCorrection(_ outcome: DictationOutcome) {
     guard outcome.insertionMethod == .ax, outcome.failureMessage == nil, let store else { return }
     correctionWatcher.watch(insertedText: outcome.text, dictationID: outcome.dictationID) { pair in
-      try? await store.logCorrection(pair, dictationID: outcome.dictationID)
+      _ = try? await store.logCorrection(pair, dictationID: outcome.dictationID)
     }
+  }
+
+  // MARK: - Onboarding
+
+  private(set) var needsOnboarding = false
+  private(set) var microphoneGranted = false
+  private(set) var accessibilityGranted = false
+  private var previewFrames: Task<Void, Never>?
+
+  func refreshPermissions() {
+    microphoneGranted = permissions.microphoneAuthorization == .authorized
+    accessibilityGranted = permissions.hasAccessibilityPermission
+  }
+
+  func requestMicrophone() async {
+    _ = await permissions.requestMicrophonePermission()
+    refreshPermissions()
+  }
+
+  func requestAccessibility() {
+    permissions.requestAccessibilityPermission()
+    refreshPermissions()
+  }
+
+  /// Live meter for the mic step; frames are drained and discarded.
+  func startLevelPreview(onLevel: @escaping @MainActor (Float) -> Void) {
+    stopLevelPreview()
+    guard let stream = try? capture.start(levelChanged: onLevel) else { return }
+    previewFrames = Task { for await _ in stream {} }
+  }
+
+  func stopLevelPreview() {
+    previewFrames?.cancel()
+    previewFrames = nil
+    capture.stop()
+  }
+
+  /// Inserts a sentence into whatever field is focused (the onboarding field).
+  func testInsertion() async -> String {
+    inserter.captureTarget()
+    let result = try? await inserter.insert(
+      "Myna Flow can place text here.", replacingSelection: false, pressEnter: false)
+    inserter.clearTarget()
+    switch result {
+    case .inserted, .replacedSelection, .pastedFromClipboard: return "Inserted — Accessibility works."
+    case .noFocusedField: return "Click the field first, then press Test."
+    default: return "Insertion did not land: \(inserter.lastInsertionDiagnostics)"
+    }
+  }
+
+  func completeOnboarding() {
+    needsOnboarding = false
+    Task { try? await store?.setSetting("1", forKey: "onboarded") }
   }
 
   // MARK: - Insights + vocabulary
@@ -253,7 +312,7 @@ final class AppCoordinator {
         parakeetInstalled = true
         parakeetDownloadFraction = nil
         await setEngine(.parakeet)
-        indicator.display = .success(words: 0)
+        indicator.display = .success(words: 0, note: nil)
         scheduleIndicatorHide(after: .seconds(1.2))
       } catch {
         Self.log.error("Parakeet install failed: \(error)")
@@ -354,7 +413,7 @@ final class AppCoordinator {
         try await modelManager.install(descriptor)
         polishDownloadFraction = nil
         await selectPolishModel(descriptor)
-        indicator.display = .success(words: 0)
+        indicator.display = .success(words: 0, note: nil)
         scheduleIndicatorHide(after: .seconds(1.2))
       } catch {
         Self.log.error("model install failed: \(error)")
@@ -455,7 +514,7 @@ final class AppCoordinator {
     inserter.clearTarget()
     switch result {
     case .inserted, .replacedSelection, .pastedFromClipboard:
-      indicator.display = .success(words: record.wordCount)
+      indicator.display = .success(words: record.wordCount, note: nil)
     case .blockedSecureField:
       indicator.display = .error("Blocked: password field")
     default:
@@ -581,7 +640,7 @@ final class AppCoordinator {
       let outcome = await engine.polish(style: style)
       switch outcome {
       case .replaced:
-        indicator.display = .success(words: 0)
+        indicator.display = .success(words: 0, note: nil)
         scheduleIndicatorHide(after: .seconds(1.2))
       case .noSelection:
         indicator.display = .error("Select some text first")
@@ -724,15 +783,18 @@ final class AppCoordinator {
       menuBarState = .recording
     case .processing, .inserting:
       menuBarState = .processing
-      indicator.display = .processing
+      indicator.display = .processing(
+        engine: engineChoice == .parakeet && parakeetInstalled ? "Parakeet" : "Apple Speech")
     case .completed:
       menuBarState = .idle
       if let outcome = lastOutcome, outcome.insertionMethod == .historyOnly {
         indicator.display = .clipboardFallback
         scheduleIndicatorHide(after: .seconds(2.5))
       } else {
-        indicator.display = .success(words: lastOutcome?.wordCount ?? 0)
-        scheduleIndicatorHide(after: .seconds(1.2))
+        // Fallback is a quiet inline note, never an interruption.
+        let note = lastOutcome?.fallbackOccurred == true ? "via Apple Speech — Parakeet fell back" : nil
+        indicator.display = .success(words: lastOutcome?.wordCount ?? 0, note: note)
+        scheduleIndicatorHide(after: note == nil ? .seconds(1.2) : .seconds(2.2))
       }
       lastOutcome = nil
     case .cancelled:

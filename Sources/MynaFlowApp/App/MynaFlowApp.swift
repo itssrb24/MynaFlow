@@ -12,12 +12,12 @@ struct MynaFlowApp: App {
     } label: {
       // The label is rendered as soon as the status item appears, so it is
       // the reliable boot hook; the menu content only exists when opened.
-      Image(systemName: menuBarSymbol)
-        .task {
-          guard !booted else { return }
-          booted = true
-          await coordinator.start()
-        }
+      BootLabel(symbol: menuBarSymbol) {
+        guard !booted else { return false }
+        booted = true
+        await coordinator.start()
+        return coordinator.needsOnboarding
+      }
     }
     .menuBarExtraStyle(.menu)
 
@@ -27,6 +27,12 @@ struct MynaFlowApp: App {
     .windowStyle(.hiddenTitleBar)
     .windowResizability(.contentMinSize)
     .defaultSize(width: 980, height: 660)
+
+    Window("Welcome to Myna Flow", id: "onboarding") {
+      OnboardingView(coordinator: coordinator)
+    }
+    .windowStyle(.hiddenTitleBar)
+    .windowResizability(.contentSize)
   }
 
   private var menuBarSymbol: String {
@@ -35,6 +41,23 @@ struct MynaFlowApp: App {
     case .recording: "mic.fill"
     case .processing: "waveform"
     }
+  }
+}
+
+/// Menu bar icon that also boots the app and opens onboarding on first run.
+private struct BootLabel: View {
+  let symbol: String
+  let boot: () async -> Bool
+  @Environment(\.openWindow) private var openWindow
+
+  var body: some View {
+    Image(systemName: symbol)
+      .task {
+        if await boot() {
+          openWindow(id: "onboarding")
+          NSApp.activate(ignoringOtherApps: true)
+        }
+      }
   }
 }
 

@@ -5,8 +5,8 @@ import SwiftUI
 enum IndicatorDisplay: Equatable {
   case hidden
   case recording(mode: RecordingMode)
-  case processing
-  case success(words: Int)
+  case processing(engine: String)
+  case success(words: Int, note: String?)
   /// The "dictated at the wrong moment" recovery — explicit, not a generic
   /// success.
   case clipboardFallback
@@ -165,17 +165,22 @@ struct IndicatorView: View {
         }
       }
       .padding(.horizontal, 18)
-    case .processing:
+    case .processing(let engine):
       HStack(spacing: 10) {
         ProgressView().controlSize(.small)
-        Text("Transcribing…")
+        Text("Transcribing — \(engine)")
           .font(.system(size: 13, weight: .medium))
       }
-    case .success(let words):
+    case .success(let words, let note):
       HStack(spacing: 8) {
         Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-        Text(words == 1 ? "Inserted 1 word" : "Inserted \(words) words")
-          .font(.system(size: 13, weight: .medium))
+        VStack(alignment: .leading, spacing: 1) {
+          Text(words == 0 ? "Done" : words == 1 ? "Inserted 1 word" : "Inserted \(words) words")
+            .font(.system(size: 13, weight: .medium))
+          if let note {
+            Text(note).font(.system(size: 10)).foregroundStyle(.secondary)
+          }
+        }
       }
     case .clipboardFallback:
       HStack(spacing: 8) {

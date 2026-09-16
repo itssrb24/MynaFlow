@@ -35,6 +35,8 @@ public struct DictationDependencies: Sendable {
 public struct DictationOutcome: Equatable, Sendable {
   public let dictationID: UUID
   public let text: String
+  public let engineUsed: EngineID
+  public let fallbackOccurred: Bool
   public let insertionMethod: InsertionMethod
   public let wordCount: Int
   public let failureMessage: String?
@@ -215,6 +217,8 @@ public actor DictationController {
       DictationOutcome(
         dictationID: record.id,
         text: text,
+        engineUsed: engineOutcome.engineUsed,
+        fallbackOccurred: engineOutcome.fallbackOccurred,
         insertionMethod: insertionMethod,
         wordCount: record.wordCount,
         failureMessage: failureMessage))
