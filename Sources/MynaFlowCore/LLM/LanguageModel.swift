@@ -7,16 +7,6 @@ public protocol LocalLanguageModel: Sendable {
   func generateInstruction(_ instruction: String, maxTokens: Int) async throws -> String
 }
 
-public enum ModelManagerError: Error, LocalizedError, Sendable {
-  case modelNotInstalled
-
-  public var errorDescription: String? {
-    switch self {
-    case .modelNotInstalled: "The selected language model is not installed."
-    }
-  }
-}
-
 /// Gemma turn scaffolding shared by the server and CLI transports.
 public enum Gemma4PromptAdapter {
   public static func wrap(_ instruction: String) -> String {
