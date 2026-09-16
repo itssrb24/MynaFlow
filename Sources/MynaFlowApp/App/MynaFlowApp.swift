@@ -51,6 +51,23 @@ struct MenuBarMenu: View {
       }
     }
     Divider()
+    if coordinator.parakeetInstalled {
+      Menu("Engine: \(coordinator.engineChoice == .parakeet ? "Parakeet" : "Apple Speech")") {
+        Button("Apple Speech") {
+          Task { await coordinator.setEngine(.apple) }
+        }
+        Button("Parakeet (higher accuracy)") {
+          Task { await coordinator.setEngine(.parakeet) }
+        }
+      }
+    } else if let fraction = coordinator.parakeetDownloadFraction {
+      Text("Downloading Parakeet… \(Int(fraction * 100))%")
+    } else {
+      Button("Install Parakeet Engine (~600 MB)") {
+        coordinator.installParakeet()
+      }
+    }
+    Divider()
     Button("Quit Myna Flow") {
       NSApplication.shared.terminate(nil)
     }

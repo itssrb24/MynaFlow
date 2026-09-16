@@ -5,7 +5,7 @@ import Testing
 
 // MARK: - Fakes
 
-private struct FakeEngine: SpeechEngine {
+private struct FakeEngine: SpeechEngine, TranscriptionProviding {
   let id: EngineID = .apple
   var result: Result<String, SpeechEngineError> = .success("um hello there")
   var isAvailable: Bool { get async { true } }

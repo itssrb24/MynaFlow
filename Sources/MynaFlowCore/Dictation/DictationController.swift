@@ -44,7 +44,7 @@ public struct DictationOutcome: Equatable, Sendable {
 /// lands it on the clipboard.
 public actor DictationController {
   private var machine = DictationStateMachine()
-  private let engine: any SpeechEngine
+  private let engine: any TranscriptionProviding
   private let cleaner: TranscriptCleaner
   private let store: any DictationStoring
   private let scratchDirectory: URL
@@ -57,7 +57,7 @@ public actor DictationController {
   public var state: DictationState { machine.state }
 
   public init(
-    engine: any SpeechEngine,
+    engine: any TranscriptionProviding,
     cleaner: TranscriptCleaner,
     store: any DictationStoring,
     scratchDirectory: URL,
@@ -91,7 +91,7 @@ public actor DictationController {
 
   /// Warm the engine so the first hotkey press pays no initialization cost.
   public func prewarm() async {
-    await engine.prepare()
+    await engine.prewarm()
   }
 
   /// Begin a dictation: capture the destination, enter recording. Returns
@@ -145,18 +145,19 @@ public actor DictationController {
     let wavURL = scratchDirectory.appendingPathComponent(
       "dictation-\(UUID().uuidString).wav", isDirectory: false)
     defer { try? FileManager.default.removeItem(at: wavURL) }
-    let transcription: TranscriptionResult
+    let engineOutcome: EngineOutcome
     do {
       try FileManager.default.createDirectory(
         at: scratchDirectory, withIntermediateDirectories: true,
         attributes: [.posixPermissions: 0o700])
       let wav = WaveEncoder().encode(frames, outputSampleRate: 16_000)
       try wav.write(to: wavURL, options: .atomic)
-      transcription = try await engine.transcribe(audio: wavURL, hints: await hints())
+      engineOutcome = try await engine.transcribe(audio: wavURL, hints: await hints())
     } catch {
       await failDictation("Transcription failed: \(error)")
       return
     }
+    let transcription = engineOutcome.result
 
     let cleaned = cleaner.clean(transcription.text, enabled: cleanupEnabled)
     let text = cleaned.text
@@ -200,8 +201,8 @@ public actor DictationController {
       rawTranscript: transcription.text,
       cleanedText: text,
       finalText: text,
-      engineUsed: engine.id.rawValue,
-      fallbackOccurred: false,
+      engineUsed: engineOutcome.engineUsed.rawValue,
+      fallbackOccurred: engineOutcome.fallbackOccurred,
       durationSeconds: transcription.durationSeconds,
       wordCount: text.split(whereSeparator: \.isWhitespace).count,
       targetApp: session?.targetApplication,
