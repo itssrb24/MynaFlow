@@ -44,6 +44,10 @@ final class AppCoordinator {
   private(set) var cleanupEnabled = true
   private(set) var modelStates: [String: ModelInstallState] = [:]
   let hardware = HardwareProfile.current()
+  private(set) var vocabulary: [VocabularyTerm] = []
+  private(set) var corrections: [CorrectionRecord] = []
+  private(set) var typingWPM: Double = 40
+  private let correctionWatcher = CorrectionWatcher()
   /// The app that was frontmost before our window took focus — where
   /// "Re-insert" should land.
   private var lastExternalApp: NSRunningApplication?
@@ -90,6 +94,10 @@ final class AppCoordinator {
         .flatMap { $0.isEmpty ? nil : $0 }
       capture.preferredDeviceUID = selectedInputUID
       cleanupEnabled = (try? await store.setting(forKey: "cleanup_enabled")) != "0"
+      if let wpm = try? await store.setting(forKey: "typing_wpm"), let value = Double(wpm), value > 0 {
+        typingWPM = value
+      }
+      await refreshVocabulary()
 
       let controller = makeController(store: store, scratch: paths.scratch)
       self.controller = controller
@@ -117,9 +125,9 @@ final class AppCoordinator {
   private func makeController(store: FlowStore, scratch: URL) -> DictationController {
     let inserter = self.inserter
     let provider = transcriptionProvider()
-    return DictationController(
+    let controller = DictationController(
       engine: provider,
-      cleaner: TranscriptCleaner(),
+      cleaner: TranscriptCleaner(protectedTerms: vocabulary.map(\.term)),
       store: store,
       scratchDirectory: scratch,
       dependencies: DictationDependencies(
@@ -134,6 +142,13 @@ final class AppCoordinator {
             return NSPasteboard.general.setString(text, forType: .string)
           }
         }))
+    Task {
+      await controller.setHintsProvider {
+        let terms = (try? await store.vocabularyTerms().map(\.term)) ?? []
+        return BiasTerms.sanitize(terms)
+      }
+    }
+    return controller
   }
 
   private func transcriptionProvider() -> any TranscriptionProviding {
@@ -149,8 +164,76 @@ final class AppCoordinator {
       Task { @MainActor in self?.handleState(state) }
     }
     await controller.setOutcomeObserver { [weak self] outcome in
-      Task { @MainActor in self?.lastOutcome = outcome }
+      Task { @MainActor in
+        self?.lastOutcome = outcome
+        self?.watchForCorrection(outcome)
+      }
     }
+  }
+
+  /// After a cursor insertion, watch the field briefly for the user's edits.
+  private func watchForCorrection(_ outcome: DictationOutcome) {
+    guard outcome.insertionMethod == .ax, outcome.failureMessage == nil, let store else { return }
+    correctionWatcher.watch(insertedText: outcome.text, dictationID: outcome.dictationID) { pair in
+      try? await store.logCorrection(pair, dictationID: outcome.dictationID)
+    }
+  }
+
+  // MARK: - Insights + vocabulary
+
+  func loadInsights(period: InsightsPeriod) async -> Insights {
+    guard let store else {
+      return InsightsAggregator.aggregate([], typingWPM: typingWPM, period: period)
+    }
+    let records = (try? await store.searchDictations(HistoryQuery(), limit: 200_000)) ?? []
+    return InsightsAggregator.aggregate(records, typingWPM: typingWPM, period: period)
+  }
+
+  func setTypingWPM(_ value: Double) {
+    typingWPM = value
+    Task { try? await store?.setSetting("\(Int(value))", forKey: "typing_wpm") }
+  }
+
+  func refreshVocabulary() async {
+    guard let store else { return }
+    vocabulary = (try? await store.vocabularyTerms()) ?? []
+    corrections = (try? await store.pendingCorrections()) ?? []
+  }
+
+  func addVocabularyTerm(_ term: String) async {
+    try? await store?.addVocabularyTerm(term, source: .manual)
+    await refreshVocabulary()
+    await rebuildControllerForVocabulary()
+  }
+
+  func removeVocabularyTerm(_ term: String) async {
+    try? await store?.removeVocabularyTerm(term)
+    await refreshVocabulary()
+    await rebuildControllerForVocabulary()
+  }
+
+  func acceptCorrection(_ correction: CorrectionRecord) async {
+    for term in CorrectionDetector.candidateTerms(from: correction.pair) {
+      try? await store?.addVocabularyTerm(term, source: .promoted)
+    }
+    try? await store?.resolveCorrection(id: correction.id, status: .accepted)
+    await refreshVocabulary()
+    await rebuildControllerForVocabulary()
+  }
+
+  func dismissCorrection(_ correction: CorrectionRecord) async {
+    try? await store?.resolveCorrection(id: correction.id, status: .dismissed)
+    await refreshVocabulary()
+  }
+
+  /// The cleaner's protected-term set is baked in at construction, so a
+  /// vocabulary change rebuilds the controller (cheap; no engine reload).
+  private func rebuildControllerForVocabulary() async {
+    guard let store, let paths else { return }
+    let controller = makeController(store: store, scratch: paths.scratch)
+    await controller.setCleanupEnabled(cleanupEnabled)
+    self.controller = controller
+    await attachObservers(to: controller)
   }
 
   /// Explicit, user-invoked download — the only network-capable action.

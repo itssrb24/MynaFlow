@@ -33,6 +33,8 @@ public struct DictationDependencies: Sendable {
 /// How a finished dictation landed — what the indicator needs to say
 /// "inserted" vs "saved to history, copied to clipboard".
 public struct DictationOutcome: Equatable, Sendable {
+  public let dictationID: UUID
+  public let text: String
   public let insertionMethod: InsertionMethod
   public let wordCount: Int
   public let failureMessage: String?
@@ -211,6 +213,8 @@ public actor DictationController {
     try? await store.insert(record)
     onOutcome(
       DictationOutcome(
+        dictationID: record.id,
+        text: text,
         insertionMethod: insertionMethod,
         wordCount: record.wordCount,
         failureMessage: failureMessage))
