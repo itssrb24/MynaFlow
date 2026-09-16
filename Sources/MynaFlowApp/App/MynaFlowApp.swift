@@ -20,6 +20,13 @@ struct MynaFlowApp: App {
         }
     }
     .menuBarExtraStyle(.menu)
+
+    Window("Myna Flow", id: "main") {
+      MainWindowView(coordinator: coordinator)
+    }
+    .windowStyle(.hiddenTitleBar)
+    .windowResizability(.contentMinSize)
+    .defaultSize(width: 980, height: 660)
   }
 
   private var menuBarSymbol: String {
@@ -33,9 +40,10 @@ struct MynaFlowApp: App {
 
 struct MenuBarMenu: View {
   let coordinator: AppCoordinator
+  @Environment(\.openWindow) private var openWindow
 
   var body: some View {
-    Button("Start Dictation (hold ⌘⇧Space)") {
+    Button("Start Dictation (hold \(coordinator.hotkeyConfiguration[.dictationHold]?.keycapLabel ?? "unbound"))") {
       coordinator.beginDictation(mode: .hold)
     }
     Divider()
@@ -67,9 +75,16 @@ struct MenuBarMenu: View {
         coordinator.installParakeet()
       }
     }
-    Divider()
     if coordinator.polishModelInstalled {
-      Text("Polish ready — select text, press ⌃⌥1/2/3")
+      Menu("Polish styles") {
+        ForEach(coordinator.styles) { style in
+          if let slot = style.hotkeySlot {
+            Text("\(style.name)  ·  slot \(slot)")
+          } else {
+            Text(style.name)
+          }
+        }
+      }
     } else if let fraction = coordinator.polishDownloadFraction {
       Text("Downloading polish model… \(Int(fraction * 100))%")
     } else if let model = coordinator.polishModel {
@@ -78,6 +93,10 @@ struct MenuBarMenu: View {
       }
     }
     Divider()
+    Button("Open Myna Flow…") {
+      coordinator.showMainWindow { id in openWindow(id: id) }
+    }
+    .keyboardShortcut(",")
     Button("Quit Myna Flow") {
       NSApplication.shared.terminate(nil)
     }

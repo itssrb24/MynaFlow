@@ -16,11 +16,24 @@ final class MicrophoneCapture {
 
   private static let levelUpdateInterval: Duration = .milliseconds(16)  // ~60 Hz
 
+  /// Capture device UID; nil follows the system default input.
+  var preferredDeviceUID: String?
+
   func start(levelChanged: @escaping @MainActor @Sendable (Float) -> Void) throws
     -> AsyncStream<AudioFrame>
   {
     stop()
     let input = engine.inputNode
+    if let uid = preferredDeviceUID, var deviceID = AudioDevices.deviceID(forUID: uid),
+      let unit = input.audioUnit
+    {
+      let status = AudioUnitSetProperty(
+        unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+        &deviceID, UInt32(MemoryLayout<AudioDeviceID>.size))
+      if status != noErr {
+        Self.log.warning("could not select input device \(uid): \(status)")
+      }
+    }
     // Voice processing for dictation: one near-field talker is exactly the
     // case Apple's AEC/noise suppression is tuned for, and dictation has no
     // second in-room speaker to lose. Set before the format is read, since

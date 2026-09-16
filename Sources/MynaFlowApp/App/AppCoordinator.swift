@@ -36,6 +36,17 @@ final class AppCoordinator {
   private(set) var polishDownloadFraction: Double?
   private(set) var polishAvailable = false
   private var polishInFlight = false
+  // Main window state
+  private(set) var styles: [Style] = []
+  private(set) var hotkeyConfiguration: HotkeyConfiguration = .default
+  private(set) var inputDevices: [AudioInputDevice] = []
+  private(set) var selectedInputUID: String?
+  private(set) var cleanupEnabled = true
+  private(set) var modelStates: [String: ModelInstallState] = [:]
+  let hardware = HardwareProfile.current()
+  /// The app that was frontmost before our window took focus — where
+  /// "Re-insert" should land.
+  private var lastExternalApp: NSRunningApplication?
   private let inserter = MacOSTextInserter()
   private let permissions = PermissionManager()
   private let capture = MicrophoneCapture()
@@ -70,9 +81,21 @@ final class AppCoordinator {
         engineChoice = .parakeet
       }
 
+      if let json = try? await store.setting(forKey: "hotkeys"),
+        let decoded = try? JSONDecoder().decode(HotkeyConfiguration.self, from: Data(json.utf8))
+      {
+        hotkeyConfiguration = decoded
+      }
+      selectedInputUID = (try? await store.setting(forKey: "input_device_uid"))
+        .flatMap { $0.isEmpty ? nil : $0 }
+      capture.preferredDeviceUID = selectedInputUID
+      cleanupEnabled = (try? await store.setting(forKey: "cleanup_enabled")) != "0"
+
       let controller = makeController(store: store, scratch: paths.scratch)
       self.controller = controller
+      await controller.setCleanupEnabled(cleanupEnabled)
       await attachObservers(to: controller)
+      await refreshStyles()
 
       installHotkeys()
       await buildLanguageProvider(paths: paths, store: store)
@@ -221,18 +244,24 @@ final class AppCoordinator {
     return nil
   }
 
-  /// Explicit, user-invoked language model download.
+  /// Explicit, user-invoked language model download (menu bar shortcut for
+  /// the recommended model).
   func installPolishModel() {
-    guard let modelManager, let descriptor = polishModel, polishDownloadFraction == nil
-    else { return }
+    guard let descriptor = polishModel else { return }
+    installModel(descriptor)
+  }
+
+  func installModel(_ descriptor: ModelDescriptor) {
+    guard let modelManager, polishDownloadFraction == nil else { return }
     polishDownloadFraction = 0
     indicator.display = .downloading(what: descriptor.displayName, percent: 0)
     indicatorPanel?.show()
     Task {
-      await modelManager.setProgressObserver { [weak self] _, state in
-        guard case .downloading(let received, let total) = state, total > 0 else { return }
-        let fraction = Double(received) / Double(total)
+      await modelManager.setProgressObserver { [weak self] id, state in
         Task { @MainActor in
+          self?.modelStates[id] = state
+          guard case .downloading(let received, let total) = state, total > 0 else { return }
+          let fraction = Double(received) / Double(total)
           self?.polishDownloadFraction = fraction
           self?.indicator.display = .downloading(
             what: descriptor.displayName, percent: Int(fraction * 100))
@@ -241,9 +270,7 @@ final class AppCoordinator {
       do {
         try await modelManager.install(descriptor)
         polishDownloadFraction = nil
-        polishModelInstalled = true
-        polishAvailable = languageProvider != nil
-        try? await store?.setSetting(descriptor.id, forKey: "language_model")
+        await selectPolishModel(descriptor)
         indicator.display = .success(words: 0)
         scheduleIndicatorHide(after: .seconds(1.2))
       } catch {
@@ -252,6 +279,189 @@ final class AppCoordinator {
         indicator.display = .error("Model download failed")
         scheduleIndicatorHide(after: .seconds(2.5))
       }
+      await refreshModelStates()
+    }
+  }
+
+  func cancelModelInstall() {
+    Task { await modelManager?.cancelActiveInstall() }
+  }
+
+  func refreshModelStates() async {
+    guard let modelManager else { return }
+    var states: [String: ModelInstallState] = [:]
+    for descriptor in DefaultModelCatalog.all {
+      states[descriptor.id] = await modelManager.state(for: descriptor)
+    }
+    modelStates = states
+    if let polishModel {
+      polishModelInstalled = states[polishModel.id] == .installed
+      polishAvailable = polishModelInstalled && languageProvider != nil
+    }
+  }
+
+  /// Switch the polish model; the warm server re-spawns lazily with it.
+  func selectPolishModel(_ descriptor: ModelDescriptor) async {
+    guard let modelManager else { return }
+    polishModel = descriptor
+    let modelURL = await modelManager.modelURL(for: descriptor)
+    await languageProvider?.updateModel(modelURL: modelURL, modelIdentifier: descriptor.id)
+    try? await store?.setSetting(descriptor.id, forKey: "language_model")
+    await refreshModelStates()
+  }
+
+  func removeModel(_ descriptor: ModelDescriptor) async {
+    guard let modelManager else { return }
+    if polishModel?.id == descriptor.id { await languageProvider?.stop() }
+    try? await modelManager.remove(descriptor)
+    await refreshModelStates()
+  }
+
+  func removeParakeet() {
+    guard let parakeetEngine else { return }
+    Task {
+      if engineChoice == .parakeet { await setEngine(.apple) }
+      try? await parakeetEngine.remove()
+      parakeetInstalled = false
+    }
+  }
+
+  // MARK: - Main window
+
+  func showMainWindow(open: (String) -> Void) {
+    // Remember where the user was so Re-insert can go back there.
+    lastExternalApp = NSWorkspace.shared.frontmostApplication
+    open("main")
+    NSApp.activate(ignoringOtherApps: true)
+  }
+
+  func searchHistory(_ query: HistoryQuery, limit: Int) async -> [DictationRecord] {
+    guard let store else { return [] }
+    return (try? await store.searchDictations(query, limit: limit)) ?? []
+  }
+
+  func historyApps() async -> [String] {
+    guard let store else { return [] }
+    return (try? await store.distinctTargetApps()) ?? []
+  }
+
+  func deleteHistory(_ range: DeletionRange) async {
+    try? await store?.deleteDictations(since: range.cutoff())
+    await refreshRecentDictations()
+  }
+
+  func deleteHistoryEntry(_ id: UUID) async {
+    try? await store?.deleteDictation(id: id)
+    await refreshRecentDictations()
+  }
+
+  /// Puts the entry back at the cursor of the app the user came from.
+  func reinsert(_ record: DictationRecord) async {
+    guard let target = lastExternalApp, !target.isTerminated else {
+      copyToClipboard(record.finalText)
+      indicator.display = .clipboardFallback
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(2))
+      return
+    }
+    NSApp.hide(nil)
+    target.activate()
+    try? await Task.sleep(for: .milliseconds(300))
+    inserter.captureTarget()
+    let result = try? await inserter.insert(record.finalText, replacingSelection: false, pressEnter: false)
+    inserter.clearTarget()
+    switch result {
+    case .inserted, .replacedSelection, .pastedFromClipboard:
+      indicator.display = .success(words: record.wordCount)
+    case .blockedSecureField:
+      indicator.display = .error("Blocked: password field")
+    default:
+      indicator.display = .clipboardFallback
+    }
+    indicatorPanel?.show()
+    scheduleIndicatorHide(after: .seconds(1.5))
+  }
+
+  /// Rewrites a history entry in a style; updates final_text, never cleaned_text.
+  func repolish(_ record: DictationRecord, style: Style) async {
+    guard let languageProvider, let store else { return }
+    let engine = PolishEngine(
+      model: languageProvider,
+      readSelection: { record.finalText },
+      replaceSelection: { text in
+        try await store.updateFinalText(text, style: style.name, forDictation: record.id)
+        return .replacedSelection
+      })
+    let outcome = await engine.polish(style: style)
+    if case .failed(let message) = outcome {
+      indicator.display = .error(message)
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(2.5))
+    }
+    await refreshRecentDictations()
+  }
+
+  // MARK: Styles
+
+  func refreshStyles() async {
+    guard let store else { return }
+    styles = (try? await store.styles()) ?? []
+  }
+
+  /// Saves a style; a slot can hold one style, so any other holder is unassigned.
+  func saveStyle(_ style: Style) async throws {
+    guard let store else { return }
+    if let slot = style.hotkeySlot {
+      for other in styles where other.id != style.id && other.hotkeySlot == slot {
+        var freed = other
+        freed.hotkeySlot = nil
+        try await store.saveStyle(freed)
+      }
+    }
+    try await store.saveStyle(style)
+    await refreshStyles()
+  }
+
+  func deleteStyle(id: UUID) async {
+    try? await store?.deleteStyle(id: id)
+    await refreshStyles()
+  }
+
+  // MARK: Hotkeys
+
+  func updateHotkey(_ action: HotkeyAction, shortcut: HotkeyShortcut?) {
+    hotkeyConfiguration[action] = shortcut
+    hotkeyMonitor?.update(configuration: hotkeyConfiguration)
+    if let data = try? JSONEncoder().encode(hotkeyConfiguration),
+      let json = String(data: data, encoding: .utf8)
+    {
+      Task { try? await store?.setSetting(json, forKey: "hotkeys") }
+    }
+  }
+
+  // MARK: Audio + cleanup
+
+  func refreshInputDevices() {
+    inputDevices = AudioDevices.inputs()
+  }
+
+  func selectInputDevice(uid: String?) {
+    selectedInputUID = uid
+    capture.preferredDeviceUID = uid
+    Task {
+      if let uid {
+        try? await store?.setSetting(uid, forKey: "input_device_uid")
+      } else {
+        try? await store?.setSetting("", forKey: "input_device_uid")
+      }
+    }
+  }
+
+  func setCleanupEnabled(_ enabled: Bool) {
+    cleanupEnabled = enabled
+    Task {
+      await controller?.setCleanupEnabled(enabled)
+      try? await store?.setSetting(enabled ? "1" : "0", forKey: "cleanup_enabled")
     }
   }
 
@@ -304,7 +514,7 @@ final class AppCoordinator {
 
   private func installHotkeys() {
     let monitor = GlobalHotkeyMonitor(
-      configuration: .default,
+      configuration: hotkeyConfiguration,
       onHoldDown: { [weak self] in self?.beginDictation(mode: .hold) },
       onHoldUp: { [weak self] in self?.endDictation() },
       onToggle: { [weak self] in self?.toggleDictation() },
