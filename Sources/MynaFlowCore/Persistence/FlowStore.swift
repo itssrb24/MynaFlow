@@ -76,6 +76,94 @@ public actor FlowStore {
       row: readDictationRecord)
   }
 
+  private static let dictationColumns = """
+    id, timestamp, raw_transcript, cleaned_text, final_text, style_applied,
+    engine_used, fallback_occurred, duration_seconds, word_count,
+    target_app, insertion_method, processing_ms
+    """
+
+  /// Filtered, reverse-chronological history. Text search is a LIKE over
+  /// the final text (FTS is a later migration if this proves slow).
+  public func searchDictations(_ filter: HistoryQuery, limit: Int) throws -> [DictationRecord] {
+    var clauses: [String] = []
+    var binders: [(OpaquePointer, Int32) -> Void] = []
+    if let text = filter.text?.trimmingCharacters(in: .whitespaces), !text.isEmpty {
+      clauses.append("final_text LIKE ?\(binders.count + 1) ESCAPE '\\'")
+      let escaped =
+        text.replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "%", with: "\\%")
+        .replacingOccurrences(of: "_", with: "\\_")
+      let pattern = "%\(escaped)%"
+      binders.append { sqlite3_bind_text($0, $1, pattern, -1, sqliteTransient) }
+    }
+    if let app = filter.targetApp {
+      clauses.append("target_app = ?\(binders.count + 1)")
+      binders.append { sqlite3_bind_text($0, $1, app, -1, sqliteTransient) }
+    }
+    if let engine = filter.engine {
+      clauses.append("engine_used = ?\(binders.count + 1)")
+      binders.append { sqlite3_bind_text($0, $1, engine, -1, sqliteTransient) }
+    }
+    if let since = filter.since {
+      clauses.append("timestamp >= ?\(binders.count + 1)")
+      let value = since.timeIntervalSince1970
+      binders.append { sqlite3_bind_double($0, $1, value) }
+    }
+    if let until = filter.until {
+      clauses.append("timestamp <= ?\(binders.count + 1)")
+      let value = until.timeIntervalSince1970
+      binders.append { sqlite3_bind_double($0, $1, value) }
+    }
+    let whereClause = clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND ")
+    let limitIndex = binders.count + 1
+    return try query(
+      "SELECT \(Self.dictationColumns) FROM dictations \(whereClause) ORDER BY timestamp DESC LIMIT ?\(limitIndex)",
+      bind: { statement in
+        for (offset, binder) in binders.enumerated() {
+          binder(statement, Int32(offset + 1))
+        }
+        sqlite3_bind_int(statement, Int32(limitIndex), Int32(limit))
+      },
+      row: readDictationRecord)
+  }
+
+  /// Deletes rows at or after `cutoff`; returns how many.
+  @discardableResult
+  public func deleteDictations(since cutoff: Date) throws -> Int {
+    try run(
+      "DELETE FROM dictations WHERE timestamp >= ?1",
+      bind: { sqlite3_bind_double($0, 1, cutoff.timeIntervalSince1970) })
+    return Int(sqlite3_changes(try requireHandle()))
+  }
+
+  public func deleteDictation(id: UUID) throws {
+    try run(
+      "DELETE FROM dictations WHERE id = ?1",
+      bind: { sqlite3_bind_text($0, 1, id.uuidString, -1, sqliteTransient) })
+  }
+
+  /// Bundle identifiers that appear in history, most frequent first.
+  public func distinctTargetApps() throws -> [String] {
+    try query(
+      """
+      SELECT target_app, COUNT(*) AS n FROM dictations
+      WHERE target_app IS NOT NULL GROUP BY target_app ORDER BY n DESC, target_app
+      """,
+      bind: { _ in },
+      row: { columnText($0, 0) ?? "" })
+  }
+
+  /// Re-polish result: final text and style change; cleaned text is immutable.
+  public func updateFinalText(_ text: String, style: String?, forDictation id: UUID) throws {
+    try run(
+      "UPDATE dictations SET final_text = ?1, style_applied = ?2 WHERE id = ?3",
+      bind: { statement in
+        sqlite3_bind_text(statement, 1, text, -1, sqliteTransient)
+        bindOptionalText(statement, 2, style)
+        sqlite3_bind_text(statement, 3, id.uuidString, -1, sqliteTransient)
+      })
+  }
+
   // MARK: - Settings
 
   public func setting(forKey key: String) throws -> String? {
