@@ -164,6 +164,99 @@ public actor FlowStore {
       })
   }
 
+  // MARK: - Vocabulary
+
+  /// Adds a term unless one already exists case-insensitively.
+  public func addVocabularyTerm(_ term: String, source: VocabularySource) throws {
+    let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    try run(
+      """
+      INSERT INTO vocabulary (id, term, added_at, source)
+      SELECT ?1, ?2, ?3, ?4
+      WHERE NOT EXISTS (SELECT 1 FROM vocabulary WHERE lower(term) = lower(?2))
+      """,
+      bind: { statement in
+        sqlite3_bind_text(statement, 1, UUID().uuidString, -1, sqliteTransient)
+        sqlite3_bind_text(statement, 2, trimmed, -1, sqliteTransient)
+        sqlite3_bind_double(statement, 3, Date().timeIntervalSince1970)
+        sqlite3_bind_text(statement, 4, source.rawValue, -1, sqliteTransient)
+      })
+  }
+
+  public func removeVocabularyTerm(_ term: String) throws {
+    try run(
+      "DELETE FROM vocabulary WHERE lower(term) = lower(?1)",
+      bind: { sqlite3_bind_text($0, 1, term, -1, sqliteTransient) })
+  }
+
+  public func vocabularyTerms() throws -> [VocabularyTerm] {
+    try query(
+      "SELECT id, term, added_at, source FROM vocabulary ORDER BY term COLLATE NOCASE",
+      bind: { _ in },
+      row: { statement in
+        VocabularyTerm(
+          id: UUID(uuidString: columnText(statement, 0) ?? "") ?? UUID(),
+          term: columnText(statement, 1) ?? "",
+          addedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 2)),
+          source: VocabularySource(rawValue: columnText(statement, 3) ?? "") ?? .manual)
+      })
+  }
+
+  // MARK: - Corrections
+
+  @discardableResult
+  public func logCorrection(_ pair: CorrectionPair, dictationID: UUID?) throws -> CorrectionRecord {
+    let record = CorrectionRecord(
+      id: UUID(), dictationID: dictationID, pair: pair, observedAt: Date(), status: .candidate)
+    try run(
+      """
+      INSERT INTO corrections (id, dictation_id, before_text, after_text, observed_at, status)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+      """,
+      bind: { statement in
+        sqlite3_bind_text(statement, 1, record.id.uuidString, -1, sqliteTransient)
+        bindOptionalText(statement, 2, dictationID?.uuidString)
+        sqlite3_bind_text(statement, 3, pair.before, -1, sqliteTransient)
+        sqlite3_bind_text(statement, 4, pair.after, -1, sqliteTransient)
+        sqlite3_bind_double(statement, 5, record.observedAt.timeIntervalSince1970)
+        sqlite3_bind_text(statement, 6, record.status.rawValue, -1, sqliteTransient)
+      })
+    return record
+  }
+
+  public func pendingCorrections() throws -> [CorrectionRecord] {
+    try query(
+      """
+      SELECT id, dictation_id, before_text, after_text, observed_at, status
+      FROM corrections WHERE status = 'candidate' ORDER BY observed_at DESC
+      """,
+      bind: { _ in },
+      row: { statement in
+        CorrectionRecord(
+          id: UUID(uuidString: columnText(statement, 0) ?? "") ?? UUID(),
+          dictationID: columnText(statement, 1).flatMap(UUID.init(uuidString:)),
+          pair: CorrectionPair(
+            before: columnText(statement, 2) ?? "", after: columnText(statement, 3) ?? ""),
+          observedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 4)),
+          status: CorrectionStatus(rawValue: columnText(statement, 5) ?? "") ?? .candidate)
+      })
+  }
+
+  public func resolveCorrection(id: UUID, status: CorrectionStatus) throws {
+    try run(
+      "UPDATE corrections SET status = ?1 WHERE id = ?2",
+      bind: { statement in
+        sqlite3_bind_text(statement, 1, status.rawValue, -1, sqliteTransient)
+        sqlite3_bind_text(statement, 2, id.uuidString, -1, sqliteTransient)
+      })
+  }
+
+  /// Total row count, for the insights loader's memory-safety guard.
+  public func dictationCount() throws -> Int {
+    try scalarInt("SELECT COUNT(*) FROM dictations")
+  }
+
   // MARK: - Settings
 
   public func setting(forKey key: String) throws -> String? {
