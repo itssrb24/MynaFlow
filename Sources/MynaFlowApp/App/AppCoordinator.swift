@@ -26,6 +26,8 @@ final class AppCoordinator {
   private var parakeetEngine: ParakeetEngine?
   private var paths: ApplicationPaths?
   private(set) var parakeetInstalled = false
+  private(set) var boostingInstalled = false
+  private(set) var boostingInstalling = false
   private(set) var parakeetDownloadFraction: Double?
   private(set) var engineChoice: EngineID = .apple
   // Polish / language model
@@ -89,6 +91,7 @@ final class AppCoordinator {
       let parakeet = ParakeetEngine(modelsBaseDirectory: paths.models)
       parakeetEngine = parakeet
       parakeetInstalled = await parakeet.isInstalled
+      boostingInstalled = await parakeet.isBoostingInstalled
       if let saved = try? await store.setting(forKey: "engine"),
         let choice = EngineID(rawValue: saved), choice == .parakeet, parakeetInstalled
       {
@@ -528,6 +531,37 @@ final class AppCoordinator {
     if polishModel?.id == descriptor.id { await languageProvider?.stop() }
     await persist("remove model") { try await modelManager.remove(descriptor) }
     await refreshModelStates()
+  }
+
+  /// Explicit download of the CTC models that let Parakeet use the vocabulary.
+  func installBoosting() {
+    guard let parakeetEngine, parakeetInstalled, !boostingInstalling else { return }
+    boostingInstalling = true
+    indicator.display = .downloading(what: "vocabulary boosting", percent: 0)
+    indicatorPanel?.show()
+    Task {
+      defer { boostingInstalling = false }
+      do {
+        try await parakeetEngine.installBoosting()
+        boostingInstalled = true
+        indicator.display = .success(words: 0, note: nil)
+        scheduleIndicatorHide(after: .seconds(1.2))
+      } catch {
+        Self.log.error("boosting install failed: \(error)")
+        indicator.display = .error("Vocabulary boosting download failed")
+        scheduleIndicatorHide(after: .seconds(2.5))
+      }
+    }
+  }
+
+  func removeBoosting() {
+    guard let parakeetEngine else { return }
+    Task {
+      await persist("remove vocabulary boosting") {
+        try await parakeetEngine.removeBoosting()
+        boostingInstalled = false
+      }
+    }
   }
 
   func removeParakeet() {

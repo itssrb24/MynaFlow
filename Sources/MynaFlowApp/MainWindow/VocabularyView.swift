@@ -42,7 +42,9 @@ struct VocabularyView: View {
             }
           }
         }
-        Text("Passed to Apple Speech as contextual hints. Parakeet support arrives with a later FluidAudio integration; terms still protect words from cleanup today.")
+        Text(coordinator.boostingInstalled
+          ? "Passed to Apple Speech as hints and to Parakeet through vocabulary boosting. Terms are also protected from cleanup."
+          : "Passed to Apple Speech as hints; install vocabulary boosting in Models for Parakeet to use them too. Terms are also protected from cleanup.")
           .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
       }
       .raised()

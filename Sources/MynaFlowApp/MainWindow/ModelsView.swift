@@ -26,6 +26,12 @@ struct ModelsView: View {
           name: "Parakeet",
           detail: "FluidAudio's Parakeet on the Neural Engine. Better on names and jargon. ~600 MB.",
           trailing: { parakeetControls })
+        if coordinator.parakeetInstalled {
+          engineRow(
+            name: "Vocabulary boosting for Parakeet",
+            detail: "Lets Parakeet honor your Vocabulary terms (Apple Speech already does). Separate ~\(ParakeetEngine.approximateBoostingMegabytes) MB download.",
+            trailing: { boostingControls })
+        }
       }
       .raised()
 
@@ -85,6 +91,22 @@ struct ModelsView: View {
       }
     } else {
       Button("Install") { coordinator.installParakeet() }
+        .buttonStyle(NeuButtonStyle(prominent: true))
+    }
+  }
+
+  @ViewBuilder
+  private var boostingControls: some View {
+    if coordinator.boostingInstalling {
+      ProgressView().controlSize(.small)
+    } else if coordinator.boostingInstalled {
+      HStack(spacing: Theme.Spacing.sm) {
+        Text("Installed").font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.success)
+        Button("Remove") { coordinator.removeBoosting() }
+          .buttonStyle(NeuButtonStyle(destructive: true))
+      }
+    } else {
+      Button("Install") { coordinator.installBoosting() }
         .buttonStyle(NeuButtonStyle(prominent: true))
     }
   }

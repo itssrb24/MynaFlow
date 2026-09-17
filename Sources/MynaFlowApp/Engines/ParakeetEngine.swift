@@ -24,6 +24,12 @@ actor ParakeetEngine: SpeechEngine, TranscriptionProviding {
   /// Support, not FluidAudio's default).
   private let modelsBaseDirectory: URL
   private var loaded = false
+  /// CTC keyword-spotting models that let Parakeet honor the vocabulary.
+  /// Optional second download; without it hints apply only to Apple Speech.
+  private var ctcModels: CtcModels?
+  private var appliedVocabulary: [String] = []
+  private static let ctcVariant: CtcModelVariant = .ctc110m
+  static let approximateBoostingMegabytes = 200
 
   init(modelsBaseDirectory: URL) {
     self.modelsBaseDirectory = modelsBaseDirectory
@@ -31,6 +37,14 @@ actor ParakeetEngine: SpeechEngine, TranscriptionProviding {
 
   private var cacheDirectory: URL {
     modelsBaseDirectory.appendingPathComponent(Repo.parakeetUnified.folderName, isDirectory: true)
+  }
+
+  private var ctcDirectory: URL {
+    modelsBaseDirectory.appendingPathComponent(Self.ctcVariant.repo.folderName, isDirectory: true)
+  }
+
+  var isBoostingInstalled: Bool {
+    CtcModels.modelsExist(at: ctcDirectory)
   }
 
   nonisolated private static var requiredFiles: [String] {
@@ -61,6 +75,39 @@ actor ParakeetEngine: SpeechEngine, TranscriptionProviding {
       loaded = true
     } catch {
       Self.log.error("Parakeet load failed: \(error)")
+      return
+    }
+    if ctcModels == nil, isBoostingInstalled {
+      do {
+        ctcModels = try await CtcModels.load(from: ctcDirectory, variant: Self.ctcVariant)
+      } catch {
+        Self.log.error("CTC boosting models failed to load: \(error)")
+      }
+    }
+  }
+
+  /// Explicit, user-approved download of the vocabulary-boosting models.
+  func installBoosting() async throws {
+    ctcModels = try await CtcModels.downloadAndLoad(to: ctcDirectory, variant: Self.ctcVariant)
+    appliedVocabulary = []
+  }
+
+  func removeBoosting() throws {
+    ctcModels = nil
+    appliedVocabulary = []
+    try FileManager.default.removeItem(at: ctcDirectory)
+  }
+
+  /// Point the rescorer at the current vocabulary. No-op without the CTC
+  /// models or when the terms have not changed.
+  private func applyVocabulary(_ terms: [String]) async {
+    guard let ctcModels, loaded, terms != appliedVocabulary, !terms.isEmpty else { return }
+    let context = CustomVocabularyContext(terms: terms.map { CustomVocabularyTerm(text: $0) })
+    do {
+      try await manager.configureVocabularyBoosting(vocabulary: context, ctcModels: ctcModels)
+      appliedVocabulary = terms
+    } catch {
+      Self.log.error("vocabulary boosting configure failed: \(error)")
     }
   }
 
@@ -80,6 +127,7 @@ actor ParakeetEngine: SpeechEngine, TranscriptionProviding {
   func transcribe(audio: URL, hints: [String]) async throws -> TranscriptionResult {
     if !loaded { await prepare() }
     guard loaded else { throw SpeechEngineError("Parakeet models are not installed") }
+    await applyVocabulary(hints)
     let (samples, duration) = try Self.read16kMono(from: audio)
     let text = try await manager.transcribe(samples)
       .trimmingCharacters(in: .whitespacesAndNewlines)
