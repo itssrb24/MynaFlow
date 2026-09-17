@@ -252,6 +252,94 @@ public actor FlowStore {
       })
   }
 
+  // MARK: - Learned rules
+
+  /// Inserts a suggestion, or refreshes the evidence of an existing one
+  /// that is still merely suggested. Approved/rejected rules are never
+  /// downgraded by a re-suggestion.
+  public func upsertSuggestedRule(_ rule: LearnedRule) throws {
+    let now = Date().timeIntervalSince1970
+    try run(
+      """
+      INSERT INTO learned_rules (id, kind, pattern, replacement, evidence, status, created_at, updated_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, 'suggested', ?6, ?6)
+      ON CONFLICT(kind, pattern) DO UPDATE SET
+        evidence = excluded.evidence, replacement = excluded.replacement, updated_at = excluded.updated_at
+        WHERE learned_rules.status = 'suggested'
+      """,
+      bind: { statement in
+        sqlite3_bind_text(statement, 1, UUID().uuidString, -1, sqliteTransient)
+        sqlite3_bind_text(statement, 2, rule.kind.rawValue, -1, sqliteTransient)
+        sqlite3_bind_text(statement, 3, rule.pattern.lowercased(), -1, sqliteTransient)
+        bindOptionalText(statement, 4, rule.replacement)
+        sqlite3_bind_int(statement, 5, Int32(rule.evidence))
+        sqlite3_bind_double(statement, 6, now)
+      })
+  }
+
+  public func learnedRules(status: LearnedRuleStatus) throws -> [StoredLearnedRule] {
+    try query(
+      """
+      SELECT id, kind, pattern, replacement, evidence, status, updated_at
+      FROM learned_rules WHERE status = ?1 ORDER BY evidence DESC, pattern
+      """,
+      bind: { sqlite3_bind_text($0, 1, status.rawValue, -1, sqliteTransient) },
+      row: Self.readLearnedRule)
+  }
+
+  public func allLearnedRules() throws -> [StoredLearnedRule] {
+    try query(
+      "SELECT id, kind, pattern, replacement, evidence, status, updated_at FROM learned_rules",
+      bind: { _ in }, row: Self.readLearnedRule)
+  }
+
+  public func setRuleStatus(id: UUID, status: LearnedRuleStatus) throws {
+    try run(
+      "UPDATE learned_rules SET status = ?1, updated_at = ?2 WHERE id = ?3",
+      bind: { statement in
+        sqlite3_bind_text(statement, 1, status.rawValue, -1, sqliteTransient)
+        sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
+        sqlite3_bind_text(statement, 3, id.uuidString, -1, sqliteTransient)
+      })
+  }
+
+  public func deleteLearnedRule(id: UUID) throws {
+    try run(
+      "DELETE FROM learned_rules WHERE id = ?1",
+      bind: { sqlite3_bind_text($0, 1, id.uuidString, -1, sqliteTransient) })
+  }
+
+  private static func readLearnedRule(_ statement: OpaquePointer) -> StoredLearnedRule {
+    StoredLearnedRule(
+      id: UUID(uuidString: columnText(statement, 0) ?? "") ?? UUID(),
+      rule: LearnedRule(
+        kind: LearnedRule.Kind(rawValue: columnText(statement, 1) ?? "") ?? .filler,
+        pattern: columnText(statement, 2) ?? "",
+        replacement: columnText(statement, 3),
+        evidence: Int(sqlite3_column_int(statement, 4))),
+      status: LearnedRuleStatus(rawValue: columnText(statement, 5) ?? "") ?? .suggested,
+      updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 6)))
+  }
+
+  /// All corrections regardless of status, for the learner.
+  public func allCorrections() throws -> [CorrectionRecord] {
+    try query(
+      """
+      SELECT id, dictation_id, before_text, after_text, observed_at, status
+      FROM corrections ORDER BY observed_at DESC
+      """,
+      bind: { _ in },
+      row: { statement in
+        CorrectionRecord(
+          id: UUID(uuidString: columnText(statement, 0) ?? "") ?? UUID(),
+          dictationID: columnText(statement, 1).flatMap(UUID.init(uuidString:)),
+          pair: CorrectionPair(
+            before: columnText(statement, 2) ?? "", after: columnText(statement, 3) ?? ""),
+          observedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 4)),
+          status: CorrectionStatus(rawValue: columnText(statement, 5) ?? "") ?? .candidate)
+      })
+  }
+
   /// Total row count, for the insights loader's memory-safety guard.
   public func dictationCount() throws -> Int {
     try scalarInt("SELECT COUNT(*) FROM dictations")
@@ -429,6 +517,22 @@ public actor FlowStore {
     // v2: custom styles carry optional example input/output pairs (JSON).
     [
       "ALTER TABLE styles ADD COLUMN examples TEXT NOT NULL DEFAULT '[]'"
+    ],
+    // v3: learning layer rules (suggested → approved/rejected).
+    [
+      """
+      CREATE TABLE learned_rules (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        pattern TEXT NOT NULL,
+        replacement TEXT,
+        evidence INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'suggested',
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL,
+        UNIQUE(kind, pattern)
+      )
+      """
     ],
   ]
 

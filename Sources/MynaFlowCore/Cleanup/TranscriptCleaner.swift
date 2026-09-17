@@ -25,6 +25,8 @@ public struct CleanupResult: Equatable, Sendable {
 public struct TranscriptCleaner: Sendable {
   /// Words never treated as disfluencies, derived from user vocabulary.
   private let protectedWords: Set<String>
+  /// Approved, enabled learning-layer rules; empty by default.
+  private let learned: LearnedRules
 
   private static let singleFillers: Set<String> = [
     "um", "umm", "uh", "uhh", "er", "erm", "ah", "hmm", "mmm",
@@ -36,7 +38,7 @@ public struct TranscriptCleaner: Sendable {
   private static let repetitionGuard: Set<String> = ["had", "very", "really"]
   private static let maxFalseStartWords = 4
 
-  public init(protectedTerms: [String] = []) {
+  public init(protectedTerms: [String] = [], learnedRules: LearnedRules = LearnedRules()) {
     var words: Set<String> = []
     for term in protectedTerms {
       for word in term.split(separator: " ") {
@@ -44,6 +46,7 @@ public struct TranscriptCleaner: Sendable {
       }
     }
     protectedWords = words
+    learned = learnedRules
   }
 
   public func clean(_ raw: String, enabled: Bool = true) -> CleanupResult {
@@ -54,6 +57,7 @@ public struct TranscriptCleaner: Sendable {
     removeFillers(&tokens, removals: &removals)
     removeFalseStarts(&tokens, removals: &removals)
     collapseRepetitions(&tokens, removals: &removals)
+    applyReplacements(&tokens)
     repairSeams(&tokens)
     return CleanupResult(text: Self.render(tokens), removals: removals)
   }
@@ -124,6 +128,9 @@ public struct TranscriptCleaner: Sendable {
     if Self.singleFillers.contains(core) {
       return 1
     }
+    if learned.isActive, learned.fillers.contains(core) {
+      return 1
+    }
 
     for phrase in Self.parentheticalFillers {
       guard index + phrase.count <= tokens.count else { continue }
@@ -192,6 +199,25 @@ public struct TranscriptCleaner: Sendable {
     }
   }
 
+  /// Learned whole-word replacements ("gonna" → "going to"), keeping the
+  /// original token's leading capitalization.
+  private func applyReplacements(_ tokens: inout [Token]) {
+    guard learned.isActive else { return }
+    let replacements = learned.replacements
+    guard !replacements.isEmpty else { return }
+    for index in tokens.indices {
+      let core = tokens[index].core
+      guard let replacement = replacements[core.lowercased()], !isProtected(tokens[index]) else {
+        continue
+      }
+      if let first = core.first, first.isUppercase, let head = replacement.first {
+        tokens[index].core = head.uppercased() + replacement.dropFirst()
+      } else {
+        tokens[index].core = replacement
+      }
+    }
+  }
+
   /// Splice out a token range, merging the punctuation seams it leaves behind.
   private func removeRange(
     _ tokens: inout [Token], _ range: Range<Int>, kind: CleanupRemoval.Kind,
@@ -230,8 +256,13 @@ public struct TranscriptCleaner: Sendable {
       guard let first = core.first, first.isLowercase else { continue }
       tokens[index].core = first.uppercased() + core.dropFirst()
     }
+    guard let last = tokens.indices.last, !tokens[last].core.isEmpty else { return }
+    if learned.isActive, learned.stripsTerminalPeriod {
+      if tokens[last].suffix.hasSuffix(".") { tokens[last].suffix.removeLast() }
+      return
+    }
     // Ensure terminal punctuation on non-empty output.
-    if let last = tokens.indices.last, !tokens[last].endsSentence, !tokens[last].core.isEmpty {
+    if !tokens[last].endsSentence {
       tokens[last].suffix += "."
     }
   }
