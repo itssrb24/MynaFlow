@@ -34,8 +34,8 @@ final class AppCoordinator {
 
   /// "Apple Speech: Ready · English (US)" — refreshed whenever the menu opens.
   var speechStatusLine: String {
-    guard let speechAssetState else { return "Apple Speech: checking…" }
-    return "Apple Speech: \(SpeechReadinessCopy.statusLine(speechAssetState))"
+    guard let speechAssetState else { return "\(EngineID.apple.displayName): checking…" }
+    return "\(EngineID.apple.displayName): \(SpeechReadinessCopy.statusLine(speechAssetState))"
   }
 
   var modelsStatusLine: String {
@@ -788,7 +788,7 @@ final class AppCoordinator {
   func reinsert(_ record: DictationRecord) async {
     guard let target = lastExternalApp, !target.isTerminated else {
       copyToClipboard(record.finalText)
-      indicator.display = .clipboardFallback
+      indicator.display = .clipboardFallback(reason: nil)
       indicatorPanel?.show()
       scheduleIndicatorHide(after: .seconds(2))
       return
@@ -810,7 +810,7 @@ final class AppCoordinator {
     case .blockedSecureField:
       indicator.display = .error("Blocked: password field")
     default:
-      indicator.display = .clipboardFallback
+      indicator.display = .clipboardFallback(reason: nil)
     }
     indicatorPanel?.show()
     scheduleIndicatorHide(after: .seconds(1.5))
@@ -1002,7 +1002,7 @@ final class AppCoordinator {
     Task {
       guard let target = scratchpadTarget, !target.isTerminated else {
         copyToClipboard(text)
-        flash(.clipboardFallback)
+        flash(.clipboardFallback(reason: nil))
         return
       }
       target.activate()
@@ -1019,7 +1019,7 @@ final class AppCoordinator {
         flash(.error("Blocked: password field"))
       default:
         copyToClipboard(text)
-        flash(.clipboardFallback)
+        flash(.clipboardFallback(reason: nil))
       }
     }
   }
@@ -1318,11 +1318,14 @@ final class AppCoordinator {
     case .processing, .inserting:
       menuBarState = .processing
       indicator.display = .processing(
-        engine: engineChoice == .parakeet && parakeetInstalled ? "Parakeet" : "Apple Speech")
+        engine: (parakeetInstalled ? engineChoice : .apple).displayName)
     case .completed:
       menuBarState = .idle
       if let outcome = lastOutcome, outcome.insertionMethod == .historyOnly {
-        indicator.display = .clipboardFallback
+        // `.completed` with `.historyOnly` is exactly the no-focused-field
+        // route; every other history-only outcome carries a failure message
+        // and ends in `.failed` instead.
+        indicator.display = .clipboardFallback(reason: "no text field was focused")
         scheduleIndicatorHide(after: .seconds(2.5))
         // Password-field blocks carry a failure message and never reach the
         // note: that text stays in history only.

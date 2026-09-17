@@ -370,12 +370,6 @@ public actor FlowStore {
       })
   }
 
-  public func deleteLearnedRule(id: UUID) throws {
-    try run(
-      "DELETE FROM learned_rules WHERE id = ?1",
-      bind: { sqlite3_bind_text($0, 1, id.uuidString, -1, sqliteTransient) })
-  }
-
   private static func readLearnedRule(_ statement: OpaquePointer) -> StoredLearnedRule {
     StoredLearnedRule(
       id: UUID(uuidString: columnText(statement, 0) ?? "") ?? UUID(),

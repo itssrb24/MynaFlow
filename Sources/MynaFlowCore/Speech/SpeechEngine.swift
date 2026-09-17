@@ -3,6 +3,22 @@ import Foundation
 public enum EngineID: String, Codable, Equatable, Sendable {
   case apple
   case parakeet
+
+  /// User-facing name ("Apple Speech", "Parakeet").
+  public var displayName: String {
+    switch self {
+    case .apple: "Apple Speech"
+    case .parakeet: "Parakeet"
+    }
+  }
+
+  /// Compact form for badges where "Apple Speech" is too long.
+  public var shortName: String {
+    switch self {
+    case .apple: "Apple"
+    case .parakeet: "Parakeet"
+    }
+  }
 }
 
 /// The transcription outcome. Streaming is out of scope by decision: text

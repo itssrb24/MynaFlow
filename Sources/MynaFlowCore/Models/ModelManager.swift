@@ -114,17 +114,6 @@ public actor LocalModelManager {
       ? .installed : .notInstalled
   }
 
-  public func installedModels() -> [InstalledModel] {
-    DefaultModelCatalog.all.compactMap { descriptor in
-      let url = modelURL(for: descriptor)
-      guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-      let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-      let date = attributes?[.creationDate] as? Date ?? .distantPast
-      return InstalledModel(
-        id: descriptor.id, descriptor: descriptor, fileURL: url, installedAt: date)
-    }
-  }
-
   public func install(_ descriptor: ModelDescriptor) async throws {
     // `validate` names the precise problem for catalog tests; callers only
     // ever need to know the descriptor was refused.
