@@ -47,6 +47,10 @@ final class AppCoordinator {
   private(set) var vocabulary: [VocabularyTerm] = []
   private(set) var corrections: [CorrectionRecord] = []
   private(set) var typingWPM: Double = 40
+  // Learning layer
+  private(set) var learningEnabled = false
+  private(set) var suggestedRules: [StoredLearnedRule] = []
+  private(set) var approvedRules: [StoredLearnedRule] = []
   private let correctionWatcher = CorrectionWatcher()
   /// The app that was frontmost before our window took focus — where
   /// "Re-insert" should land.
@@ -104,6 +108,8 @@ final class AppCoordinator {
         typingWPM = value
       }
       await refreshVocabulary()
+      learningEnabled = (try? await store.setting(forKey: "learning_enabled")) == "1"
+      await refreshLearnedRules()
 
       let controller = makeController(store: store, scratch: paths.scratch)
       self.controller = controller
@@ -119,6 +125,7 @@ final class AppCoordinator {
         await controller.prewarm()
       }
       await refreshRecentDictations()
+      Task { await self.runLearner() }
       refreshPermissions()
       needsOnboarding = (try? await store.setting(forKey: "onboarded")) == nil
       let readyMs = Int(Date().timeIntervalSince(self.launchedAt) * 1000)
@@ -137,7 +144,9 @@ final class AppCoordinator {
     let provider = transcriptionProvider()
     let controller = DictationController(
       engine: provider,
-      cleaner: TranscriptCleaner(protectedTerms: vocabulary.map(\.term)),
+      cleaner: TranscriptCleaner(
+        protectedTerms: vocabulary.map(\.term),
+        learnedRules: LearnedRules(approved: approvedRules.map(\.rule), enabled: learningEnabled)),
       store: store,
       scratchDirectory: scratch,
       dependencies: DictationDependencies(
@@ -184,12 +193,51 @@ final class AppCoordinator {
   /// After a cursor insertion, watch the field briefly for the user's edits.
   private func watchForCorrection(_ outcome: DictationOutcome) {
     guard outcome.insertionMethod == .ax, outcome.failureMessage == nil, let store else { return }
-    correctionWatcher.watch(insertedText: outcome.text, dictationID: outcome.dictationID) { pair in
+    correctionWatcher.watch(insertedText: outcome.text, dictationID: outcome.dictationID) { [weak self] pair in
       do {
         _ = try await store.logCorrection(pair, dictationID: outcome.dictationID)
+        await self?.runLearner()
       } catch {
         Self.log.error("correction log failed: \(error)")
       }
+    }
+  }
+
+  // MARK: - Learning layer
+
+  func refreshLearnedRules() async {
+    guard let store else { return }
+    suggestedRules = (try? await store.learnedRules(status: .suggested)) ?? []
+    approvedRules = (try? await store.learnedRules(status: .approved)) ?? []
+  }
+
+  /// Re-derives suggestions from every correction on record. Cheap enough
+  /// to run after each logged correction.
+  func runLearner() async {
+    guard let store else { return }
+    let corrections = ((try? await store.allCorrections()) ?? []).map(\.pair)
+    let existing = ((try? await store.allLearnedRules()) ?? []).map(\.rule)
+    let suggestions = StyleProfileLearner.suggest(
+      corrections: corrections, records: [], existing: existing)
+    await persist("save suggestions") {
+      for rule in suggestions { try await store.upsertSuggestedRule(rule) }
+    }
+    await refreshLearnedRules()
+  }
+
+  func setRuleStatus(_ id: UUID, _ status: LearnedRuleStatus) async {
+    await persist("update rule") { try await store?.setRuleStatus(id: id, status: status) }
+    await refreshLearnedRules()
+    await rebuildControllerForVocabulary()
+  }
+
+  func setLearningEnabled(_ enabled: Bool) {
+    learningEnabled = enabled
+    Task {
+      await persist("save learning switch") {
+        try await store?.setSetting(enabled ? "1" : "0", forKey: "learning_enabled")
+      }
+      await rebuildControllerForVocabulary()
     }
   }
 
