@@ -120,7 +120,7 @@ final class AppCoordinator {
 
       let controller = makeController(store: store, scratch: paths.scratch)
       await controller.setCleanupEnabled(cleanupEnabled)
-      session = makeSession(controller: controller)
+      session = makeSession(controller: controller, scratch: paths.scratch)
       await installController(controller)
       await refreshStyles()
 
@@ -360,8 +360,12 @@ final class AppCoordinator {
     guard let store else {
       return InsightsAggregator.aggregate([], typingWPM: typingWPM, period: period)
     }
-    let records = (try? await store.searchDictations(HistoryQuery(), limit: 200_000)) ?? []
-    return InsightsAggregator.aggregate(records, typingWPM: typingWPM, period: period)
+    do {
+      return try await store.insights(typingWPM: typingWPM, period: period)
+    } catch {
+      Self.log.error("insights failed: \(error)")
+      return InsightsAggregator.aggregate([], typingWPM: typingWPM, period: period)
+    }
   }
 
   func setTypingWPM(_ value: Double) {
@@ -848,10 +852,10 @@ final class AppCoordinator {
     hotkeyMonitor = monitor
   }
 
-  private func makeSession(controller: DictationController) -> DictationSession {
+  private func makeSession(controller: DictationController, scratch: URL) -> DictationSession {
     let session = DictationSession(
       capture: capture, indicator: indicator, indicatorPanel: indicatorPanel,
-      permissions: permissions)
+      permissions: permissions, scratchDirectory: scratch)
     session.replaceController(controller)
     session.isControllerBusy = { [weak self] in
       switch self?.controllerState {

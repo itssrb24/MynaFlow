@@ -15,6 +15,7 @@ final class DictationSession {
   private let indicator: IndicatorModel
   private let indicatorPanel: IndicatorPanelController?
   private let permissions: PermissionManager
+  private let scratchDirectory: URL
   private(set) var controller: DictationController?
   private var pendingController: DictationController?
 
@@ -33,9 +34,11 @@ final class DictationSession {
 
   init(
     capture: MicrophoneCapture, indicator: IndicatorModel,
-    indicatorPanel: IndicatorPanelController?, permissions: PermissionManager
+    indicatorPanel: IndicatorPanelController?, permissions: PermissionManager,
+    scratchDirectory: URL
   ) {
     self.capture = capture
+    self.scratchDirectory = scratchDirectory
     self.indicator = indicator
     self.indicatorPanel = indicatorPanel
     self.permissions = permissions
@@ -138,23 +141,35 @@ final class DictationSession {
       handle(.cancel)
       return
     }
-    let buffer = DictationAudioBuffer()
     do {
+      // Frames stream straight into a 16 kHz scratch WAV, so a 10-minute
+      // toggle session never holds its audio in memory.
+      try FileManager.default.createDirectory(
+        at: scratchDirectory, withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700])
+      let wavURL = scratchDirectory.appendingPathComponent(
+        "dictation-\(UUID().uuidString).wav", isDirectory: false)
+      let writer = try StreamingWaveWriter(url: wavURL, outputSampleRate: 16_000)
       let frames = try capture.start { [weak self] level in
         self?.indicator.audioLevel = level
         Task { await controller.updateAudioLevel(level) }
       }
       startElapsedTimer()
       frameCollector = Task { [weak self] in
+        var writeFailed = false
         for await frame in frames {
-          await buffer.append(frame)
+          do { try writer.append(frame) } catch { writeFailed = true }
         }
-        guard !Task.isCancelled else { return }
-        let collected = await buffer.frames()
+        try? writer.finish()
+        guard !Task.isCancelled else {
+          try? FileManager.default.removeItem(at: wavURL)
+          return
+        }
         // Capture is over: the session is free again while transcription runs.
         self?.frameCollector = nil
         self?.handle(.captureFinished)
-        await controller.finishRecording(frames: collected)
+        await controller.finishRecording(
+          audio: wavURL, hasAudio: writer.samplesWritten > 0 && !writeFailed)
         await self?.onFinished()
       }
     } catch {

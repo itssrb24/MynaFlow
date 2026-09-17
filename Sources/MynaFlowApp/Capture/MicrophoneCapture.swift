@@ -134,14 +134,3 @@ final class MicrophoneCapture {
     continuation = nil
   }
 }
-
-/// Retains a dictation's mic frames for the length of that dictation so the
-/// transcriber consumes a complete recording after key-up. Discarded — never
-/// persisted — as soon as transcription finishes.
-actor DictationAudioBuffer {
-  private var collected: [AudioFrame] = []
-
-  func append(_ frame: AudioFrame) { collected.append(frame) }
-
-  func frames() -> [AudioFrame] { collected }
-}

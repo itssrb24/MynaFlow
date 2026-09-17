@@ -9,6 +9,7 @@ struct HistoryView: View {
   @State private var records: [DictationRecord] = []
   @State private var apps: [String] = []
   @State private var confirmRange: DeletionRange?
+  @State private var searchDebounce: Task<Void, Never>?
 
   var body: some View {
     Page(title: "History", subtitle: "Everything you've dictated, kept on this Mac.") {
@@ -30,7 +31,16 @@ struct HistoryView: View {
       }
     }
     .task { await reload() }
-    .onChange(of: searchText) { Task { await reload() } }
+    .onChange(of: searchText) {
+      // Debounced: a LIKE scan per keystroke would queue behind (and delay)
+      // dictation writes on the store actor.
+      searchDebounce?.cancel()
+      searchDebounce = Task {
+        try? await Task.sleep(for: .milliseconds(250))
+        guard !Task.isCancelled else { return }
+        await reload()
+      }
+    }
     .onChange(of: appFilter) { Task { await reload() } }
     .onChange(of: engineFilter) { Task { await reload() } }
     .confirmationDialog(

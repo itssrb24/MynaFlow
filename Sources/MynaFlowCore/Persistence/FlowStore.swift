@@ -340,9 +340,104 @@ public actor FlowStore {
       })
   }
 
-  /// Total row count, for the insights loader's memory-safety guard.
-  public func dictationCount() throws -> Int {
-    try scalarInt("SELECT COUNT(*) FROM dictations")
+  // MARK: - Insights (aggregated in SQL so 100k rows never load into memory)
+
+  public func insights(
+    typingWPM: Double, now: Date = Date(), calendar: Calendar = .current,
+    period: InsightsPeriod = .all
+  ) throws -> Insights {
+    let since = period.since(now: now, calendar: calendar)?.timeIntervalSince1970 ?? -Double.infinity
+    let bind: (OpaquePointer) -> Void = { sqlite3_bind_double($0, 1, since) }
+
+    struct Totals { var words = 0; var count = 0; var seconds = 0.0; var fallbacks = 0; var msSum = 0 }
+    let totals = try query(
+      """
+      SELECT COALESCE(SUM(word_count),0), COUNT(*), COALESCE(SUM(duration_seconds),0),
+             COALESCE(SUM(fallback_occurred),0), COALESCE(SUM(processing_ms),0)
+      FROM dictations WHERE timestamp >= ?1
+      """,
+      bind: bind,
+      row: { s in
+        Totals(
+          words: Int(sqlite3_column_int64(s, 0)), count: Int(sqlite3_column_int64(s, 1)),
+          seconds: sqlite3_column_double(s, 2), fallbacks: Int(sqlite3_column_int64(s, 3)),
+          msSum: Int(sqlite3_column_int64(s, 4)))
+      }).first ?? Totals()
+
+    let apps = try query(
+      """
+      SELECT target_app, COUNT(*), SUM(word_count) FROM dictations
+      WHERE timestamp >= ?1 AND target_app IS NOT NULL
+      GROUP BY target_app ORDER BY SUM(word_count) DESC, target_app
+      """,
+      bind: bind,
+      row: { s in
+        AppUsage(
+          bundleID: columnText(s, 0) ?? "", dictations: Int(sqlite3_column_int64(s, 1)),
+          words: Int(sqlite3_column_int64(s, 2)))
+      })
+    let engines = try query(
+      """
+      SELECT engine_used, COUNT(*) FROM dictations WHERE timestamp >= ?1
+      GROUP BY engine_used ORDER BY COUNT(*) DESC, engine_used
+      """,
+      bind: bind,
+      row: { s in EngineShare(engine: columnText(s, 0) ?? "", count: Int(sqlite3_column_int64(s, 1))) })
+    let styles = try query(
+      """
+      SELECT style_applied, COUNT(*) FROM dictations
+      WHERE timestamp >= ?1 AND style_applied IS NOT NULL
+      GROUP BY style_applied ORDER BY COUNT(*) DESC, style_applied
+      """,
+      bind: bind,
+      row: { s in StyleUsage(style: columnText(s, 0) ?? "", count: Int(sqlite3_column_int64(s, 1))) })
+
+    // p95 by nearest rank: the (ceil(0.95·n))-th smallest.
+    var p95 = 0
+    if totals.count > 0 {
+      let rank = Int((Double(totals.count) * 0.95).rounded(.up))
+      let offset = max(0, min(totals.count - 1, rank - 1))
+      p95 = try query(
+        "SELECT processing_ms FROM dictations WHERE timestamp >= ?1 ORDER BY processing_ms LIMIT 1 OFFSET ?2",
+        bind: { s in
+          sqlite3_bind_double(s, 1, since)
+          sqlite3_bind_int(s, 2, Int32(offset))
+        },
+        row: { Int(sqlite3_column_int64($0, 0)) }).first ?? 0
+    }
+
+    // Daily trend over the whole history, bucketed in Swift by the caller's
+    // calendar — only (timestamp, words) pairs from the trend window load.
+    let today = calendar.startOfDay(for: now)
+    let windowStart = calendar.date(byAdding: .day, value: -(InsightsAggregator.trendDays - 1), to: today) ?? today
+    var byDay: [Date: Int] = [:]
+    let trendRows = try query(
+      "SELECT timestamp, word_count FROM dictations WHERE timestamp >= ?1",
+      bind: { sqlite3_bind_double($0, 1, windowStart.timeIntervalSince1970) },
+      row: { s in (Date(timeIntervalSince1970: sqlite3_column_double(s, 0)), Int(sqlite3_column_int64(s, 1))) })
+    for (timestamp, words) in trendRows {
+      byDay[calendar.startOfDay(for: timestamp), default: 0] += words
+    }
+    let daily: [DailyWords] = (0..<InsightsAggregator.trendDays).reversed().compactMap { offset in
+      guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { return nil }
+      return DailyWords(day: day, words: byDay[day] ?? 0)
+    }
+
+    let speakingWPM = totals.seconds > 0 ? Double(totals.words) / (totals.seconds / 60) : 0
+    let typingSeconds = typingWPM > 0 ? Double(totals.words) / typingWPM * 60 : 0
+    return Insights(
+      totalWords: totals.words,
+      totalDictations: totals.count,
+      totalDictationSeconds: totals.seconds,
+      speakingWPM: speakingWPM,
+      timeSavedSeconds: max(0, typingSeconds - totals.seconds),
+      topApps: apps,
+      engineSplit: engines,
+      fallbackRate: totals.count == 0 ? 0 : Double(totals.fallbacks) / Double(totals.count),
+      styleUsage: styles,
+      averageProcessingMs: totals.count == 0 ? 0 : totals.msSum / totals.count,
+      p95ProcessingMs: p95,
+      dailyWords: daily)
   }
 
   // MARK: - Settings

@@ -136,33 +136,55 @@ public actor DictationController {
     }
   }
 
-  /// Key-up: transcribe the captured frames, clean, insert, record. The
-  /// frames live only for the duration of this call; the temp WAV is removed
-  /// on every path out.
+  /// Key-up with in-memory frames (tests, small captures): encodes to a
+  /// scratch WAV and continues as `finishRecording(audio:)`.
   public func finishRecording(frames: [AudioFrame]) async {
     guard case .recording = machine.state else { return }
-    let session = machine.session
-    try? machine.apply(.stop)
-    onStateChange(machine.state)
-
-    let startedProcessing = ContinuousClock.now
-
     guard frames.contains(where: { !$0.samples.isEmpty }) else {
+      try? machine.apply(.stop)
+      onStateChange(machine.state)
       await failDictation("No audio captured")
       return
     }
-
-    // Encode to a scratch WAV; audio never outlives this dictation.
     let wavURL = scratchDirectory.appendingPathComponent(
       "dictation-\(UUID().uuidString).wav", isDirectory: false)
-    defer { try? FileManager.default.removeItem(at: wavURL) }
-    let engineOutcome: EngineOutcome
     do {
       try FileManager.default.createDirectory(
         at: scratchDirectory, withIntermediateDirectories: true,
         attributes: [.posixPermissions: 0o700])
       let wav = WaveEncoder().encode(frames, outputSampleRate: 16_000)
       try wav.write(to: wavURL, options: .atomic)
+    } catch {
+      try? machine.apply(.stop)
+      onStateChange(machine.state)
+      await failDictation("Could not write audio: \(error)")
+      return
+    }
+    await finishRecording(audio: wavURL, hasAudio: true)
+  }
+
+  /// Key-up: transcribe the scratch WAV (streamed to disk during capture),
+  /// clean, insert, record. The WAV is removed on every path out; audio
+  /// never outlives this dictation.
+  public func finishRecording(audio wavURL: URL, hasAudio: Bool) async {
+    guard case .recording = machine.state else {
+      try? FileManager.default.removeItem(at: wavURL)
+      return
+    }
+    let session = machine.session
+    try? machine.apply(.stop)
+    onStateChange(machine.state)
+
+    let startedProcessing = ContinuousClock.now
+    defer { try? FileManager.default.removeItem(at: wavURL) }
+
+    guard hasAudio else {
+      await failDictation("No audio captured")
+      return
+    }
+
+    let engineOutcome: EngineOutcome
+    do {
       engineOutcome = try await engine.transcribe(audio: wavURL, hints: await hints())
     } catch {
       await failDictation("Transcription failed: \(error)")
