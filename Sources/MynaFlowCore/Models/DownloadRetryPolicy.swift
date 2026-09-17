@@ -7,9 +7,10 @@ import Foundation
 /// change and nothing in the app was looking. Every decision here is a
 /// one-line test; the downloader just executes them.
 public enum DownloadRetryPolicy {
-  /// Retries after the first attempt. Four total tries, resuming from the
-  /// `.part` file each time — a retry continues, it never starts over.
-  public static let maxRetries = 3
+  /// Retries after the first attempt, each resuming from the `.part` file —
+  /// a retry continues, it never starts over. Generous because a resumed
+  /// retry costs only the backoff, and hotspots drop mid-transfer often.
+  public static let maxRetries = 12
 
   /// Seconds of silence (no bytes written) before the watchdog calls a live
   /// task dead. Below this is a slow network, which is not our business.
@@ -19,10 +20,10 @@ public enum DownloadRetryPolicy {
     idleSeconds >= stallSeconds
   }
 
-  /// 2, 4, 8 — enough to ride out a Wi-Fi transition, short enough that the
-  /// progress bar visibly recovers instead of looking dead.
+  /// 2, 4, 8, 16, then capped at 30 s — enough to ride out a Wi-Fi or
+  /// hotspot transition, short enough that the bar visibly recovers.
   public static func delay(beforeRetry attempt: Int) -> TimeInterval {
-    TimeInterval(1 << max(1, attempt))
+    min(30, TimeInterval(1 << max(1, attempt)))
   }
 
   /// Transient transport failures are ours to retry. Content and intent

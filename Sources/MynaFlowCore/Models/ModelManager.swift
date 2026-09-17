@@ -243,23 +243,27 @@ public actor LocalModelManager {
   }
 }
 
-// @unchecked Sendable: URLSession serializes delegate callbacks, and
-// destination/progress/existingBytes are set before resume() (happens-before
-// the first callback). The one genuine race — didFinishDownloadingTo vs
-// didCompleteWithError both racing to complete — is serialized by `lock`.
-private final class HTTPRangeDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+// @unchecked Sendable: URLSession serializes delegate callbacks and the
+// FileHandle is touched only from them; completion is serialized by `lock`.
+//
+// Streams bytes straight into the `.part` file as they arrive. The previous
+// download-task design materialized the file only at completion, so a
+// mid-transfer failure discarded every byte and the Range "resume" had
+// nothing to resume from — on a flaky link a multi-GB model could never
+// finish. Now a retry continues from the byte where the wire went quiet.
+private final class HTTPRangeDownloader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
   private let lock = OSAllocatedUnfairLock()
   private var continuation: CheckedContinuation<Void, Error>?
   private var session: URLSession?
-  private var destination: URL?
+  private var handle: FileHandle?
   private var existingBytes: Int64 = 0
+  private var receivedBytes: Int64 = 0
+  private var expectedTotalBytes: Int64 = 0
   private var progress: (@Sendable (Int64, Int64) -> Void)?
   private var completed = false
   private var lastReportedBytes: Int64 = 0
-  /// Stamped on every byte delivery; the watchdog reads it. A task that goes
-  /// this quiet is dead even if URLSession disagrees.
+  /// Stamped on every byte delivery; the watchdog reads it.
   private var lastActivity = Date()
-  private var task: URLSessionDownloadTask?
 
   func cancelTransfer() {
     // The `.part` file keeps its bytes: a later install resumes, not restarts.
@@ -273,21 +277,27 @@ private final class HTTPRangeDownloader: NSObject, URLSessionDownloadDelegate, @
     expectedTotalBytes: Int64,
     progress: @escaping @Sendable (Int64, Int64) -> Void
   ) async throws {
-    self.destination = destination
     self.progress = progress
+    self.expectedTotalBytes = expectedTotalBytes
+    if !FileManager.default.fileExists(atPath: destination.path) {
+      FileManager.default.createFile(
+        atPath: destination.path, contents: nil, attributes: [.posixPermissions: 0o600])
+    }
     existingBytes =
       (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+    receivedBytes = existingBytes
+    let handle = try FileHandle(forWritingTo: destination)
+    try handle.seekToEnd()
+    self.handle = handle
+
     var request = URLRequest(url: url)
     request.timeoutInterval = 120
     if existingBytes > 0 {
       request.setValue("bytes=\(existingBytes)-", forHTTPHeaderField: "Range")
     }
 
-    // Watchdog: URLSession's own timeouts are not sufficient here. With
-    // waitsForConnectivity a network path change parks the task in a waiting
-    // state where no timeout runs. So connectivity-waiting is OFF (a drop
-    // fails fast; the retry loop above owns recovery), and this watchdog
-    // catches a connection that stays open and silently stops delivering.
+    // Watchdog for a connection that stays open but silently stops
+    // delivering; URLSession's own timeouts do not catch that case.
     lock.withLock { lastActivity = Date() }
     let watchdog = Task { [weak self] in
       while !Task.isCancelled {
@@ -301,7 +311,11 @@ private final class HTTPRangeDownloader: NSObject, URLSessionDownloadDelegate, @
         }
       }
     }
-    defer { watchdog.cancel() }
+    defer {
+      watchdog.cancel()
+      try? handle.close()
+      self.handle = nil
+    }
 
     try await withCheckedThrowingContinuation { continuation in
       self.continuation = continuation
@@ -312,70 +326,73 @@ private final class HTTPRangeDownloader: NSObject, URLSessionDownloadDelegate, @
       configuration.urlCache = nil
       let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
       self.session = session
-      let task = session.downloadTask(with: request)
-      self.task = task
-      task.resume()
+      session.dataTask(with: request).resume()
     }
     session?.finishTasksAndInvalidate()
     session = nil
   }
 
   func urlSession(
-    _ session: URLSession,
-    downloadTask: URLSessionDownloadTask,
-    didWriteData bytesWritten: Int64,
-    totalBytesWritten: Int64,
-    totalBytesExpectedToWrite: Int64
+    _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
   ) {
-    // Throttle: this fires per network buffer (thousands of times on a
-    // multi-GB file); forward at most every 8 MB of progress.
-    let received = existingBytes + totalBytesWritten
-    lock.withLock { lastActivity = Date() }
-    let shouldForward = lock.withLock {
-      guard received - lastReportedBytes >= 8 * 1_024 * 1_024 || lastReportedBytes == 0 else {
-        return false
-      }
-      lastReportedBytes = received
-      return true
+    guard let http = response as? HTTPURLResponse else {
+      completionHandler(.cancel)
+      finish(.failure(URLError(.badServerResponse)))
+      return
     }
-    if shouldForward {
-      progress?(received, existingBytes + totalBytesExpectedToWrite)
+    switch http.statusCode {
+    case 206:
+      completionHandler(.allow)
+    case 200:
+      // Server ignored the Range header: start the file over rather than
+      // appending a full body onto a partial one.
+      if existingBytes > 0 {
+        try? handle?.truncate(atOffset: 0)
+        existingBytes = 0
+        receivedBytes = 0
+      }
+      completionHandler(.allow)
+    case 416:
+      // Requested range not satisfiable: the part file is already complete.
+      completionHandler(.cancel)
+      finish(.success(()))
+    default:
+      completionHandler(.cancel)
+      finish(.failure(URLError(.badServerResponse)))
     }
   }
 
-  func urlSession(
-    _ session: URLSession,
-    downloadTask: URLSessionDownloadTask,
-    didFinishDownloadingTo location: URL
-  ) {
-    guard let destination else { return finish(.failure(ModelManagerError.invalidDescriptor)) }
+  func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
     do {
-      let responseCode = (downloadTask.response as? HTTPURLResponse)?.statusCode
-      if existingBytes > 0 && responseCode == 206 {
-        let handle = try FileHandle(forWritingTo: destination)
-        try handle.seekToEnd()
-        let incoming = try FileHandle(forReadingFrom: location)
-        while true {
-          let chunk = try incoming.read(upToCount: 4 * 1_024 * 1_024) ?? Data()
-          if chunk.isEmpty { break }
-          try handle.write(contentsOf: chunk)
-        }
-        try incoming.close()
-        try handle.close()
-      } else {
-        if FileManager.default.fileExists(atPath: destination.path) {
-          try FileManager.default.removeItem(at: destination)
-        }
-        try FileManager.default.moveItem(at: location, to: destination)
-      }
-      finish(.success(()))
+      try handle?.write(contentsOf: data)
     } catch {
+      session.invalidateAndCancel()
       finish(.failure(error))
+      return
+    }
+    receivedBytes += Int64(data.count)
+    lock.withLock { lastActivity = Date() }
+    // Throttle: forward at most every 8 MB of progress.
+    let shouldForward = lock.withLock {
+      guard receivedBytes - lastReportedBytes >= 8 * 1_024 * 1_024 || lastReportedBytes == 0 else {
+        return false
+      }
+      lastReportedBytes = receivedBytes
+      return true
+    }
+    if shouldForward {
+      progress?(receivedBytes, expectedTotalBytes)
     }
   }
 
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-    if let error { finish(.failure(error)) }
+    if let error {
+      finish(.failure(error))
+    } else {
+      try? handle?.synchronize()
+      finish(.success(()))
+    }
   }
 
   private func finish(_ result: Result<Void, Error>) {
