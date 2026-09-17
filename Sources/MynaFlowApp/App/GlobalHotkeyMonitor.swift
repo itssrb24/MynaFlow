@@ -40,8 +40,12 @@ final class GlobalHotkeyMonitor {
 
   func update(configuration: HotkeyConfiguration) {
     self.configuration = configuration
-    holdActive = false
-    holdViaModifiers = false
+    // Remapping while a hold is active must not strand the microphone open.
+    if holdActive {
+      holdActive = false
+      holdViaModifiers = false
+      onHoldUp()
+    }
   }
 
   func install() {
@@ -82,6 +86,17 @@ final class GlobalHotkeyMonitor {
       return
     }
 
+    // Chord guard first: a character key arriving during a modifier-only
+    // hold means the user was typing a regular shortcut (⌃C, ⌘S…), not
+    // dictating — abort so bare-modifier push-to-talk doesn't hijack every
+    // OS shortcut that shares its modifier. Must precede the cancel and
+    // style branches, or a style chord during a ⌃-hold leaves the mic open.
+    if event.type == .keyDown, !event.isARepeat, holdViaModifiers {
+      holdActive = false
+      holdViaModifiers = false
+      onChordAbort()
+      return
+    }
     if event.type == .keyDown,
       configuration[.cancel]?.matches(keyCode: event.keyCode, modifiers: flags) == true
     {
@@ -91,23 +106,13 @@ final class GlobalHotkeyMonitor {
     // Style hotkeys are live whenever the app is running: select text
     // anywhere, press the chord.
     if event.type == .keyDown, !event.isARepeat {
-      for action in [HotkeyAction.style1, .style2, .style3, .style4, .style5]
+      for action in HotkeyAction.styleActions
       where configuration[action]?.matches(keyCode: event.keyCode, modifiers: flags) == true {
         onStyle(action)
         return
       }
     }
     if event.type == .keyDown, !event.isARepeat {
-      // Chord guard: a character key arriving during a modifier-only hold
-      // means the user was typing a regular shortcut (⌃C, ⌘S…), not
-      // dictating — abort so bare-modifier push-to-talk doesn't hijack
-      // every OS shortcut that shares its modifier.
-      if holdViaModifiers {
-        holdActive = false
-        holdViaModifiers = false
-        onChordAbort()
-        return
-      }
       if configuration[.dictationHold]?.matches(keyCode: event.keyCode, modifiers: flags) == true,
         !holdActive
       {

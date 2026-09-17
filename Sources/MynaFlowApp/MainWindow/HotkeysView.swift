@@ -17,7 +17,7 @@ struct HotkeysView: View {
 
       VStack(alignment: .leading, spacing: Theme.Spacing.md) {
         SectionLabel(text: "Polish styles")
-        ForEach([HotkeyAction.style1, .style2, .style3, .style4, .style5], id: \.self) { action in
+        ForEach(HotkeyAction.styleActions, id: \.self) { action in
           row(action, note: styleNote(for: action))
         }
         Text("⌃-based chords are recommended: the global monitor observes keys and cannot swallow them, so ⌥-chords would type a character over your selection.")

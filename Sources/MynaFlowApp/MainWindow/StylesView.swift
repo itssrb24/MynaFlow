@@ -44,7 +44,7 @@ struct StylesView: View {
               }
               Spacer()
               if let slot = style.hotkeySlot,
-                let shortcut = coordinator.hotkeyConfiguration[styleAction(slot)]
+                let shortcut = HotkeyAction.forSlot(slot).flatMap { coordinator.hotkeyConfiguration[$0] }
               {
                 Keycap(label: shortcut.keycapLabel)
               }
@@ -110,7 +110,7 @@ struct StylesView: View {
         Picker("Slot", selection: bound.hotkeySlot) {
           Text("None").tag(Int?.none)
           ForEach(1...5, id: \.self) { slot in
-            let label = coordinator.hotkeyConfiguration[styleAction(slot)]?.keycapLabel ?? "unbound"
+            let label = HotkeyAction.forSlot(slot).flatMap { coordinator.hotkeyConfiguration[$0] }?.keycapLabel ?? "unbound"
             Text("Slot \(slot) · \(label)").tag(Int?.some(slot))
           }
         }
@@ -167,15 +167,5 @@ struct StylesView: View {
     selectedID = style.id
     draft = style
     saveError = nil
-  }
-
-  private func styleAction(_ slot: Int) -> HotkeyAction {
-    switch slot {
-    case 1: .style1
-    case 2: .style2
-    case 3: .style3
-    case 4: .style4
-    default: .style5
-    }
   }
 }

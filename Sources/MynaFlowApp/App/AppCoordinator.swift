@@ -62,18 +62,10 @@ final class AppCoordinator {
   private let capture = MicrophoneCapture()
   private var hotkeyMonitor: GlobalHotkeyMonitor?
   private var indicatorPanel: IndicatorPanelController?
-  private var frameCollector: Task<Void, Never>?
-  private var elapsedTimer: Task<Void, Never>?
-  private var audioBuffer = DictationAudioBuffer()
-  private var toggleSessionActive = false
-  /// Safety valve: a forgotten toggle session must not record forever.
-  private var toggleAutoStop: Task<Void, Never>?
-  private static let toggleMaximumDuration: Duration = .seconds(600)
   private var lastOutcome: DictationOutcome?
-  /// The in-flight start; a key-up that arrives before it resolves must not
-  /// leave the microphone open with no stop pending.
-  private var pendingStart: Task<Void, Never>?
-  private var releaseArrivedEarly = false
+  /// Owns start/stop/cancel/capture; see DictationSessionPolicy for the rules.
+  private var session: DictationSession?
+  private var controllerState: DictationState = .idle
 
   private let launchedAt = Date()
 
@@ -115,9 +107,9 @@ final class AppCoordinator {
       await refreshLearnedRules()
 
       let controller = makeController(store: store, scratch: paths.scratch)
-      self.controller = controller
       await controller.setCleanupEnabled(cleanupEnabled)
-      await attachObservers(to: controller)
+      session = makeSession(controller: controller)
+      await installController(controller)
       await refreshStyles()
 
       installHotkeys()
@@ -365,8 +357,7 @@ final class AppCoordinator {
     guard let store, let paths else { return }
     let controller = makeController(store: store, scratch: paths.scratch)
     await controller.setCleanupEnabled(cleanupEnabled)
-    self.controller = controller
-    await attachObservers(to: controller)
+    await installController(controller)
   }
 
   /// Explicit, user-invoked download — the only network-capable action.
@@ -403,8 +394,8 @@ final class AppCoordinator {
     try? await store?.setSetting(choice.rawValue, forKey: "engine")
     guard let store, let paths else { return }
     let controller = makeController(store: store, scratch: paths.scratch)
-    self.controller = controller
-    await attachObservers(to: controller)
+    await controller.setCleanupEnabled(cleanupEnabled)
+    await installController(controller)
     Task.detached(priority: .utility) { await controller.prewarm() }
   }
 
@@ -767,156 +758,62 @@ final class AppCoordinator {
     }
   }
 
-  // MARK: - Hotkeys
+  // MARK: - Hotkeys + session
 
   private func installHotkeys() {
     let monitor = GlobalHotkeyMonitor(
       configuration: hotkeyConfiguration,
-      onHoldDown: { [weak self] in self?.beginDictation(mode: .hold) },
-      onHoldUp: { [weak self] in self?.endDictation() },
-      onToggle: { [weak self] in self?.toggleDictation() },
-      onCancel: { [weak self] in self?.cancelDictation() },
-      onChordAbort: { [weak self] in self?.cancelDictation() },
+      onHoldDown: { [weak self] in self?.session?.handle(.holdDown) },
+      onHoldUp: { [weak self] in self?.session?.handle(.holdUp) },
+      onToggle: { [weak self] in self?.session?.handle(.togglePressed) },
+      onCancel: { [weak self] in self?.session?.handle(.cancel) },
+      onChordAbort: { [weak self] in self?.session?.handle(.cancel) },
       onStyle: { [weak self] action in self?.polishSelection(action: action) })
     monitor.install()
     hotkeyMonitor = monitor
   }
 
-  func beginDictation(mode: DictationMode) {
-    guard permissions.microphoneAuthorization == .authorized else {
-      Task { _ = await permissions.requestMicrophonePermission() }
-      return
-    }
-    guard let controller else { return }
-    // The indicator appears immediately on the hotkey edge — the <100 ms
-    // budget — before any async work.
-    let previousDisplay = indicator.display
-    indicator.display = .recording(mode: mode == .hold ? .hold : .toggle)
-    indicator.audioLevel = 0
-    indicator.elapsedSeconds = 0
-    indicatorPanel?.show()
-
-    releaseArrivedEarly = false
-    pendingStart?.cancel()
-    pendingStart = Task {
-      guard await controller.startDictation(mode: mode) else {
-        // Another dictation (e.g. an active toggle session) owns the mic:
-        // put the indicator back the way it was rather than hiding it.
-        await MainActor.run {
-          if case .recording = previousDisplay {
-            self.indicator.display = previousDisplay
-          } else {
-            self.indicator.display = .hidden
-            self.indicatorPanel?.hide()
-          }
-        }
-        return
-      }
-      await MainActor.run {
-        if self.releaseArrivedEarly {
-          // Key-up beat us here: nothing was captured, so cancel cleanly.
-          self.releaseArrivedEarly = false
-          Task { await controller.cancelDictation() }
-        } else {
-          self.startCapture()
-        }
+  private func makeSession(controller: DictationController) -> DictationSession {
+    let session = DictationSession(
+      capture: capture, indicator: indicator, indicatorPanel: indicatorPanel,
+      permissions: permissions)
+    session.replaceController(controller)
+    session.isControllerBusy = { [weak self] in
+      switch self?.controllerState {
+      case .processing, .inserting: true
+      default: false
       }
     }
+    session.onFinished = { [weak self] in await self?.refreshRecentDictations() }
+    session.onError = { [weak self] message in
+      self?.indicator.display = .error(message)
+      self?.indicatorPanel?.show()
+      self?.scheduleIndicatorHide(after: .seconds(2.5))
+    }
+    return session
   }
 
-  func endDictation() {
-    toggleAutoStop?.cancel()
-    toggleAutoStop = nil
-    toggleSessionActive = false
-    stopElapsedTimer()
-    if frameCollector == nil {
-      // Capture has not started yet — the start is still in flight.
-      releaseArrivedEarly = true
-    }
-    capture.stop()
-    // The frame collector drains the stream to completion, then hands the
-    // frames to the controller.
-  }
-
-  private func toggleDictation() {
-    if toggleSessionActive {
-      endDictation()
-    } else {
-      toggleSessionActive = true
-      beginDictation(mode: .toggle)
-      toggleAutoStop?.cancel()
-      toggleAutoStop = Task { [weak self] in
-        try? await Task.sleep(for: Self.toggleMaximumDuration)
-        guard !Task.isCancelled else { return }
-        await MainActor.run { self?.endDictation() }
-      }
-    }
+  /// Menu bar "Start Dictation": toggle semantics, so it can always be stopped.
+  func toggleDictationFromMenu() {
+    session?.handle(.menuStart)
   }
 
   func cancelDictation() {
-    guard let controller else { return }
-    pendingStart?.cancel()
-    releaseArrivedEarly = false
-    toggleAutoStop?.cancel()
-    toggleSessionActive = false
-    stopElapsedTimer()
-    capture.stop()
-    frameCollector?.cancel()
-    frameCollector = nil
-    Task { await controller.cancelDictation() }
+    session?.handle(.cancel)
   }
 
-  // MARK: - Capture plumbing
-
-  private func startCapture() {
-    guard let controller else { return }
-    audioBuffer = DictationAudioBuffer()
-    let buffer = audioBuffer
-    do {
-      let frames = try capture.start { [weak self] level in
-        self?.indicator.audioLevel = level
-        Task { await controller.updateAudioLevel(level) }
-      }
-      startElapsedTimer()
-      frameCollector = Task {
-        for await frame in frames {
-          await buffer.append(frame)
-        }
-        // Stream finished — capture stopped. Hand everything over unless the
-        // dictation was cancelled meanwhile.
-        guard !Task.isCancelled else { return }
-        let collected = await buffer.frames()
-        await MainActor.run { self.frameCollector = nil }
-        await controller.finishRecording(frames: collected)
-        await self.refreshRecentDictations()
-      }
-    } catch {
-      Self.log.error("mic capture failed: \(error)")
-      Task { await controller.cancelDictation() }
-      indicator.display = .error("Microphone unavailable")
-      scheduleIndicatorHide(after: .seconds(2.5))
-    }
-  }
-
-  private func startElapsedTimer() {
-    elapsedTimer?.cancel()
-    elapsedTimer = Task { [weak self] in
-      while !Task.isCancelled {
-        try? await Task.sleep(for: .seconds(1))
-        guard !Task.isCancelled else { return }
-        self?.indicator.elapsedSeconds += 1
-      }
-    }
-  }
-
-  private func stopElapsedTimer() {
-    elapsedTimer?.cancel()
-    elapsedTimer = nil
+  /// Swaps the dictation controller (engine or rules changed). The session
+  /// applies it between dictations, never mid-flight.
+  private func installController(_ controller: DictationController) async {
+    self.controller = controller
+    await attachObservers(to: controller)
+    session?.replaceController(controller)
   }
 
   // MARK: - State → indicator
 
   private func handleState(_ state: DictationState) {
+    controllerState = state
     switch state {
     case .idle:
       menuBarState = .idle

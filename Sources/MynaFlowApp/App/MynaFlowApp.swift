@@ -66,8 +66,13 @@ struct MenuBarMenu: View {
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
-    Button("Start Dictation (hold \(coordinator.hotkeyConfiguration[.dictationHold]?.keycapLabel ?? "unbound"))") {
-      coordinator.beginDictation(mode: .hold)
+    Button(coordinator.menuBarState == .recording
+      ? "Stop Dictation"
+      : "Start Dictation (or hold \(coordinator.hotkeyConfiguration[.dictationHold]?.keycapLabel ?? "unbound"))") {
+      coordinator.toggleDictationFromMenu()
+    }
+    if coordinator.menuBarState != .idle {
+      Button("Cancel Dictation") { coordinator.cancelDictation() }
     }
     Divider()
     if coordinator.recentDictations.isEmpty {

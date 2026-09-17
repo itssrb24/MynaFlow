@@ -21,6 +21,13 @@ public enum HotkeyAction: String, CaseIterable, Codable, Sendable {
     }
   }
 
+  public static let styleActions: [HotkeyAction] = [.style1, .style2, .style3, .style4, .style5]
+
+  /// The action driving a style table hotkey_slot (1–5).
+  public static func forSlot(_ slot: Int) -> HotkeyAction? {
+    styleActions.first { $0.styleSlot == slot }
+  }
+
   /// The style table's hotkey_slot this action drives, if any.
   public var styleSlot: Int? {
     switch self {
