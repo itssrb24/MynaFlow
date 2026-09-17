@@ -39,6 +39,7 @@ final class DictationSession {
     self.indicator = indicator
     self.indicatorPanel = indicatorPanel
     self.permissions = permissions
+    capture.onConfigurationChange = { [weak self] in self?.handle(.deviceLost) }
   }
 
   var isIdle: Bool { policy.isIdle }

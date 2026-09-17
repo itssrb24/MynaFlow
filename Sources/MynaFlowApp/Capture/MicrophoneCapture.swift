@@ -18,6 +18,12 @@ final class MicrophoneCapture {
 
   /// Capture device UID; nil follows the system default input.
   var preferredDeviceUID: String?
+  /// Fires when the engine's input graph changes underneath a running
+  /// capture — device unplugged, default input switched, or a wake from
+  /// sleep. The stream is finished; the owner decides what to do with the
+  /// frames collected so far.
+  var onConfigurationChange: @MainActor () -> Void = {}
+  private var configurationObserver: (any NSObjectProtocol)?
 
   func start(levelChanged: @escaping @MainActor @Sendable (Float) -> Void) throws
     -> AsyncStream<AudioFrame>
@@ -57,6 +63,15 @@ final class MicrophoneCapture {
     input.installTap(onBus: 0, bufferSize: 2_048, format: format, block: tap)
     engine.prepare()
     try engine.start()
+    configurationObserver = NotificationCenter.default.addObserver(
+      forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let self, self.continuation != nil else { return }
+        Self.log.warning("audio engine configuration changed mid-capture")
+        self.onConfigurationChange()
+      }
+    }
 
     // Deliver the most recent audio level at a bounded rate from a single task,
     // instead of spawning one Task per audio buffer on the real-time tap thread.
@@ -90,8 +105,15 @@ final class MicrophoneCapture {
     levelTask?.cancel()
     levelTask = nil
     latestLevel.withLock { $0 = 0 }
+    if let configurationObserver {
+      NotificationCenter.default.removeObserver(configurationObserver)
+      self.configurationObserver = nil
+    }
+    // Remove the tap unconditionally: after a configuration change or a
+    // failed start the engine reports not-running while the tap (and the
+    // continuation) are still installed.
+    engine.inputNode.removeTap(onBus: 0)
     if engine.isRunning {
-      engine.inputNode.removeTap(onBus: 0)
       engine.stop()
     }
     // `engine.stop()` does NOT release the voice-processing unit. Left up, it

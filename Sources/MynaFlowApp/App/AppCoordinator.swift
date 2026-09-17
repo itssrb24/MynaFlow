@@ -113,6 +113,7 @@ final class AppCoordinator {
       await refreshStyles()
 
       installHotkeys()
+      installSleepWakeHandling()
       await buildLanguageProvider(paths: paths, store: store)
 
       // Pre-warm off the critical path so cold launch → ready stays fast.
@@ -769,6 +770,28 @@ final class AppCoordinator {
   }
 
   // MARK: - Hotkeys + session
+
+  private var sleepObservers: [any NSObjectProtocol] = []
+
+  /// Sleep ends any live dictation with what was captured (audio across a
+  /// sleep is garbage); wake re-arms the global monitors, which macOS can
+  /// drop across a sleep/lock cycle.
+  private func installSleepWakeHandling() {
+    let center = NSWorkspace.shared.notificationCenter
+    sleepObservers = [
+      center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) {
+        [weak self] _ in
+        MainActor.assumeIsolated {
+          guard let self, self.session?.isIdle == false else { return }
+          self.session?.handle(.deviceLost)
+        }
+      },
+      center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) {
+        [weak self] _ in
+        MainActor.assumeIsolated { self?.hotkeyMonitor?.install() }
+      },
+    ]
+  }
 
   private func installHotkeys() {
     let monitor = GlobalHotkeyMonitor(
