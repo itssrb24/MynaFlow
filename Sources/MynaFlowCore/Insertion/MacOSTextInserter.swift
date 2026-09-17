@@ -75,10 +75,10 @@ public final class MacOSTextInserter: TextInsertionService {
     let resolvedTarget = focusedTarget ?? currentFocusedElement()
     let role: String = resolvedTarget.flatMap { copyAttribute($0, kAXRoleAttribute) } ?? ""
     let subrole: String = resolvedTarget.flatMap { copyAttribute($0, kAXSubroleAttribute) } ?? ""
-    // The inserter has no trust signal of its own: without Accessibility every
-    // query above fails and the target is nil, which lands on the same plan.
+    // Without Accessibility every query above fails anyway; asking the OS
+    // directly makes the plan explicit instead of relying on that side effect.
     let plan = InsertionPlanner.plan(
-      accessibilityGranted: true,
+      accessibilityGranted: AXIsProcessTrusted(),
       hasFocusedElement: resolvedTarget != nil,
       isSecureField: SecureFieldDetector.isSecure(role: role, subrole: subrole))
 
