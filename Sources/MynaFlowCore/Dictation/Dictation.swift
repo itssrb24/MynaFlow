@@ -12,7 +12,6 @@ public struct DictationSession: Identifiable, Codable, Equatable, Sendable {
   public let startedAt: Date
   public var endedAt: Date?
   public var audioLevel: Float
-  public var interimTranscript: String
   public var finalTranscript: String?
   public let targetApplication: String?
   public let mode: DictationMode
@@ -23,7 +22,6 @@ public struct DictationSession: Identifiable, Codable, Equatable, Sendable {
     startedAt: Date = Date(),
     endedAt: Date? = nil,
     audioLevel: Float = 0,
-    interimTranscript: String = "",
     finalTranscript: String? = nil,
     targetApplication: String? = nil,
     mode: DictationMode = .hold,
@@ -33,7 +31,6 @@ public struct DictationSession: Identifiable, Codable, Equatable, Sendable {
     self.startedAt = startedAt
     self.endedAt = endedAt
     self.audioLevel = audioLevel
-    self.interimTranscript = interimTranscript
     self.finalTranscript = finalTranscript
     self.targetApplication = targetApplication
     self.mode = mode
@@ -56,7 +53,6 @@ public enum DictationState: Equatable, Sendable {
 public enum DictationEvent: Equatable, Sendable {
   case start(targetApplication: String?, mode: DictationMode)
   case updateAudioLevel(Float)
-  case updateInterim(String)
   case stop
   case finish(String)
   case inserted
@@ -90,9 +86,6 @@ public struct DictationStateMachine: Sendable {
     case (.recording, .updateAudioLevel(let level)):
       session?.audioLevel = min(max(level, 0), 1)
 
-    case (.recording, .updateInterim(let transcript)):
-      session?.interimTranscript = transcript
-
     case (.recording, .stop):
       session?.endedAt = now
       session?.audioLevel = 0
@@ -109,7 +102,6 @@ public struct DictationStateMachine: Sendable {
       state = .completed
 
     case (.recording, .cancel), (.processing, .cancel):
-      session?.interimTranscript = ""
       session?.finalTranscript = nil
       session?.audioLevel = 0
       session?.endedAt = now

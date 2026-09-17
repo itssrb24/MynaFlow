@@ -118,18 +118,20 @@ struct MenuBarMenu: View {
     }
     Divider()
     if coordinator.parakeetInstalled {
-      Menu("Engine: \(coordinator.engineChoice == .parakeet ? "Parakeet" : "Apple Speech")") {
-        Button("Apple Speech") {
+      Menu("Engine: \(coordinator.engineChoice.displayName)") {
+        Button(EngineID.apple.displayName) {
           Task { await coordinator.setEngine(.apple) }
         }
-        Button("Parakeet (higher accuracy)") {
+        Button("\(EngineID.parakeet.displayName) (higher accuracy)") {
           Task { await coordinator.setEngine(.parakeet) }
         }
       }
     } else if let fraction = coordinator.parakeetDownloadFraction {
       Text("Downloading Parakeet… \(Int(fraction * 100))%")
     } else {
-      Button("Install Parakeet Engine (~600 MB)") {
+      Button(
+        "Install \(EngineID.parakeet.displayName) Engine (~\(ParakeetEngine.approximateDownloadMegabytes) MB)"
+      ) {
         coordinator.installParakeet()
       }
     }

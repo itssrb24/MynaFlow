@@ -39,20 +39,20 @@ struct ModelCatalogTests {
     }
   }
 
-  @Test("Checksum verification rejects corrupt bytes")
+  @Test("File hashing matches a known SHA-256 and detects corrupt bytes")
   func checksumRejectsCorruption() throws {
     let verifier = ModelFileVerifier()
-    let good = Data("model weights".utf8)
-    let expected = verifier.sha256Hex(of: good)
-    #expect(verifier.verify(good, expectedSHA256: expected))
-    #expect(!verifier.verify(Data("model weightz".utf8), expectedSHA256: expected))
-
-    // File-based hashing agrees with in-memory hashing.
+    // `printf 'model weights' | shasum -a 256`
+    let expected = "a2d42c4aa884e21216cbb8da4c7ba2fcf9b6033b2331666e666145c24caf7a38"
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("verify-\(UUID().uuidString).bin")
-    try good.write(to: url)
     defer { try? FileManager.default.removeItem(at: url) }
+
+    try Data("model weights".utf8).write(to: url)
     #expect(try verifier.sha256Hex(ofFile: url) == expected)
+
+    try Data("model weightz".utf8).write(to: url)
+    #expect(try verifier.sha256Hex(ofFile: url) != expected)
   }
 }
 
@@ -94,12 +94,11 @@ struct SetupAdvisorTests {
     }
   }
 
-  @Test("A machine that fits nothing gets nil, and skip stays the honest answer")
+  @Test("A machine that fits nothing gets nil")
   func nothingFits() {
     let tiny = HardwareProfile(
       memoryBytes: 4 * 1_073_741_824, freeDiskBytes: 2 * 1_073_741_824, macOSMajorVersion: 26)
     #expect(SetupAdvisor.largestRunnableLanguageModel(on: tiny) == nil)
-    #expect(SetupAdvisor.recommendedLanguage(for: .skip) == nil)
   }
 }
 

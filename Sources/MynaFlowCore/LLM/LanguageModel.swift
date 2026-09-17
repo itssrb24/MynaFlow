@@ -217,7 +217,7 @@ public actor LanguageModelProvider: LocalLanguageModel {
         return try await model.generateInstruction(instruction, maxTokens: maxTokens)
       } catch {
         guard Self.shouldFallBackToCLI(after: error) else { throw error }
-        MynaLog.warn(.provider, "warm instruction failed (\(type(of: error))), CLI fallback")
+        MynaLog.warn("warm instruction failed (\(type(of: error))), CLI fallback")
         onFallback()
       }
     }

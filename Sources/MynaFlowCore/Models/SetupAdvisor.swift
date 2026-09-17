@@ -28,15 +28,6 @@ public struct HardwareProfile: Equatable, Sendable {
   }
 }
 
-/// How far the language model should go. `skip` is a first-class answer —
-/// dictation is fully functional without any LLM.
-public enum PolishDepth: String, CaseIterable, Sendable {
-  case cleanup
-  case rewrite
-  case analyze
-  case skip
-}
-
 /// Why a model is or is not offered. Unavailable models are shown with their
 /// reason rather than hidden: "needs 32 GB, this Mac has 16 GB" teaches, while
 /// a missing row just looks broken.
@@ -53,21 +44,15 @@ public enum SetupAdvisor {
   /// Matches `LocalModelManager.install`, which refuses without this much slack.
   private static let installDiskHeadroomBytes: Int64 = 1_000_000_000
 
-  /// Memory a model needs while running, or 0 when memory is not the binding
-  /// constraint.
+  /// Memory a model needs while running.
   ///
   /// Measured on an M4 Pro: `llama-server` with a 6.3 GB GGUF at ctx 8192 holds
   /// 7.89 GB resident — about 1.25x the file, the extra being the KV cache and
   /// runtime. (Its `phys_footprint` reads far lower because llama.cpp mmaps the
   /// weights as file-backed pages, but those must stay resident for the model
   /// to run at speed, so RSS is the honest figure.)
-  ///
-  /// Speech models run on the Neural Engine with a small footprint, and no
-  /// equivalent measurement was taken — so they are gated on disk alone rather
-  /// than on a number nobody verified.
   public static func requiredMemory(for descriptor: ModelDescriptor) -> Int64 {
-    guard descriptor.kind == .languageModel else { return 0 }
-    return descriptor.expectedBytes * 5 / 4 + systemReserveBytes
+    descriptor.expectedBytes * 5 / 4 + systemReserveBytes
   }
 
   public static func availability(
@@ -79,19 +64,10 @@ public enum SetupAdvisor {
     guard hardware.freeDiskBytes >= disk else { return .insufficientDisk(needs: disk) }
 
     let memory = requiredMemory(for: descriptor)
-    guard memory == 0 || hardware.memoryBytes >= memory else {
+    guard hardware.memoryBytes >= memory else {
       return .insufficientMemory(needs: memory)
     }
     return .recommended
-  }
-
-  public static func recommendedLanguage(for depth: PolishDepth) -> ModelDescriptor? {
-    switch depth {
-    case .cleanup: DefaultModelCatalog.gemma4E4BQ4
-    case .rewrite: DefaultModelCatalog.gemma4TwelveBQ4
-    case .analyze: DefaultModelCatalog.gemma4TwentySixBA4BQ4
-    case .skip: nil
-    }
   }
 
   /// Whether the model leaves real headroom while resident: its RSS
@@ -116,14 +92,5 @@ public enum SetupAdvisor {
     let bySize = DefaultModelCatalog.language.sorted { $0.expectedBytes > $1.expectedBytes }
     let runnable = bySize.filter { availability(of: $0, on: hardware) == .recommended }
     return runnable.first { fitsComfortably($0, on: hardware) } ?? runnable.first
-  }
-
-  /// The same answer expressed as a wizard option, so the UI can point at a
-  /// choice the user can see rather than at a model filename they cannot.
-  /// Nil only when no language model fits at all, where `.skip` is the honest
-  /// remaining answer.
-  public static func largestRunnableDepth(on hardware: HardwareProfile) -> PolishDepth? {
-    guard let model = largestRunnableLanguageModel(on: hardware) else { return nil }
-    return PolishDepth.allCases.first { recommendedLanguage(for: $0)?.id == model.id }
   }
 }

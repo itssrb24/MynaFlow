@@ -84,7 +84,7 @@ struct InsightsView: View {
             SectionLabel(text: "Engines")
             ForEach(insights.engineSplit, id: \.engine) { share in
               HStack {
-                Text(share.engine == "parakeet" ? "Parakeet" : "Apple Speech")
+                Text((EngineID(rawValue: share.engine) ?? .apple).displayName)
                   .font(Theme.Fonts.body).foregroundStyle(Theme.Colors.textPrimary)
                 Spacer()
                 Text("\(share.count)").font(Theme.Fonts.mono).foregroundStyle(Theme.Colors.textTertiary)

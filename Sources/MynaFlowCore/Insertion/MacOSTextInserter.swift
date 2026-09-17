@@ -72,8 +72,18 @@ public final class MacOSTextInserter: TextInsertionService {
     if capturedElement != nil, !capturedTargetIsStillFocused(focusedTarget) {
       return safeFallbackForChangedTarget(text, current: focusedTarget)
     }
-    let target = focusedTarget ?? currentFocusedElement()
-    guard let target else {
+    let resolvedTarget = focusedTarget ?? currentFocusedElement()
+    let role: String = resolvedTarget.flatMap { copyAttribute($0, kAXRoleAttribute) } ?? ""
+    let subrole: String = resolvedTarget.flatMap { copyAttribute($0, kAXSubroleAttribute) } ?? ""
+    // The inserter has no trust signal of its own: without Accessibility every
+    // query above fails and the target is nil, which lands on the same plan.
+    let plan = InsertionPlanner.plan(
+      accessibilityGranted: true,
+      hasFocusedElement: resolvedTarget != nil,
+      isSecureField: SecureFieldDetector.isSecure(role: role, subrole: subrole))
+
+    switch plan {
+    case .historyPlusClipboard:
       // Fail closed: with no resolvable focused element we cannot rule out a
       // password field, so never synthesize a paste into the unknown. The
       // text goes to the clipboard and history; the indicator says so.
@@ -85,17 +95,17 @@ public final class MacOSTextInserter: TextInsertionService {
         clipboard: clipboardReady ? "ready" : "failed", value: "unavailable")
       if clipboardReady { scheduleClipboardCleanup(payload: text, previous: previousClipboard) }
       return .noFocusedField
-    }
-
-    let role: String = copyAttribute(target, kAXRoleAttribute) ?? ""
-    let subrole: String = copyAttribute(target, kAXSubroleAttribute) ?? ""
-    guard !SecureFieldDetector.isSecure(role: role, subrole: subrole) else {
+    case .refuseSecureField:
       // Never place dictated text on the general pasteboard for a secure or
       // password field — any other app can read it. Abort insertion entirely.
       lastInsertionDiagnostics =
         "Secure field blocked; role=\(role); subrole=\(subrole); clipboard=skipped"
       return .blockedSecureField
+    case .axInsert:
+      break
     }
+    // `.axInsert` is only ever planned with a resolved element.
+    guard let target = resolvedTarget else { return .noFocusedField }
 
     let selected: String? = copyAttribute(target, kAXSelectedTextAttribute)
     let valueBefore: String? = copyAttribute(target, kAXValueAttribute)
@@ -351,7 +361,7 @@ public final class MacOSTextInserter: TextInsertionService {
   }
 }
 
-// MARK: - Focused-element resolution (shared with future context reads)
+// MARK: - Focused-element resolution (shared with SelectionReader)
 
 @MainActor
 func focusedElement(for application: NSRunningApplication?) -> AXUIElement? {

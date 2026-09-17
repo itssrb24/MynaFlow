@@ -9,8 +9,9 @@ enum IndicatorDisplay: Equatable {
   case processing(engine: String)
   case success(words: Int, note: String?)
   /// The "dictated at the wrong moment" recovery — explicit, not a generic
-  /// success.
-  case clipboardFallback
+  /// success. `reason` is appended when the caller knows why ("no text field
+  /// was focused"); nil where the route is a catch-all.
+  case clipboardFallback(reason: String?)
   case error(String)
   case downloading(what: String, percent: Int)
   case polishing(style: String)
@@ -250,10 +251,12 @@ struct IndicatorView: View {
           }
         }
       }
-    case .clipboardFallback:
+    case .clipboardFallback(let reason):
       HStack(spacing: 8) {
         Image(systemName: "doc.on.clipboard.fill").foregroundStyle(.yellow)
-        Text("Saved to history, copied to clipboard")
+        Text(
+          reason.map { "Saved to history and copied to clipboard — \($0)" }
+            ?? "Saved to history and copied to clipboard")
           .font(.system(size: 12, weight: .medium))
       }
     case .error(let message):

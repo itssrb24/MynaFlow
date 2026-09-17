@@ -87,8 +87,8 @@ struct HistoryView: View {
       .labelsHidden()
       Picker("Engine", selection: $engineFilter) {
         Text("All engines").tag(String?.none)
-        Text("Apple Speech").tag(String?.some("apple"))
-        Text("Parakeet").tag(String?.some("parakeet"))
+        Text(EngineID.apple.displayName).tag(String?.some(EngineID.apple.rawValue))
+        Text(EngineID.parakeet.displayName).tag(String?.some(EngineID.parakeet.rawValue))
       }
       .labelsHidden()
       Picker("When", selection: $dateRange) {
@@ -178,7 +178,7 @@ private struct HistoryRow: View {
   private var fallbackExplanation: String {
     let base = record.insertionMethod == .clipboard
       ? "Pasted via the clipboard instead of Accessibility"
-      : "Saved to history and clipboard — not inserted"
+      : "Saved to history and copied to clipboard"
     guard let why = record.insertionDiagnostics else { return base }
     return "\(base)\n\(why)"
   }
@@ -258,24 +258,13 @@ struct EngineBadge: View {
 
   var body: some View {
     HStack(spacing: 3) {
-      Text(engine == "parakeet" ? "Parakeet" : "Apple")
+      Text((EngineID(rawValue: engine) ?? .apple).shortName)
       if fallback {
         Image(systemName: "arrow.uturn.down").font(.system(size: 8))
       }
     }
     .font(Theme.Fonts.caption)
     .foregroundStyle(fallback ? Theme.Colors.warning : Theme.Colors.textTertiary)
-    .help(fallback ? "Fell back to Apple Speech for this dictation" : "")
-  }
-}
-
-enum AppNames {
-  /// "com.apple.TextEdit" → "TextEdit" when the app is on disk, else the id.
-  static func display(_ bundleID: String) -> String {
-    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-      return FileManager.default.displayName(atPath: url.path)
-        .replacingOccurrences(of: ".app", with: "")
-    }
-    return bundleID.split(separator: ".").last.map(String.init) ?? bundleID
+    .help(fallback ? "Fell back to \(EngineID.apple.displayName) for this dictation" : "")
   }
 }

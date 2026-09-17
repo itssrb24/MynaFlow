@@ -5,7 +5,6 @@ import os
 public enum LlamaServerError: Error, LocalizedError, Sendable {
   case executableMissing
   case modelMissing
-  case noFreePort
   case failedToLaunch(String)
   case healthTimeout
   case badResponse(Int)
@@ -15,7 +14,6 @@ public enum LlamaServerError: Error, LocalizedError, Sendable {
     switch self {
     case .executableMissing: "The bundled llama-server is missing."
     case .modelMissing: "The selected model file is not installed."
-    case .noFreePort: "Could not reserve a loopback port for the model server."
     case .failedToLaunch(let m): "The model server failed to start: \(m)"
     case .healthTimeout: "The model server did not become ready in time."
     case .badResponse(let code): "The model server returned an unexpected response (\(code))."
@@ -165,17 +163,15 @@ public actor LlamaServerHost {
     let modelBytes =
       (try? FileManager.default.attributesOfItem(atPath: configuration.modelURL.path)[.size]
         as? Int64) ?? 0
-    MynaLog.info(
-      .server,
-      "spawn: model=\(configuration.modelIdentifier) fileBytes=\(modelBytes) "
+    MynaLog.info("spawn: model=\(configuration.modelIdentifier) fileBytes=\(modelBytes) "
         + "ramTotal=\(SystemInfoReader.memoryTotalBytes()) ramFree=\(SystemInfoReader.memoryFreeBytes())"
     )
     guard FileManager.default.isExecutableFile(atPath: configuration.executableURL.path) else {
-      MynaLog.error(.server, "spawn failed: executable missing")
+      MynaLog.error("spawn failed: executable missing")
       throw LlamaServerError.executableMissing
     }
     guard FileManager.default.fileExists(atPath: configuration.modelURL.path) else {
-      MynaLog.error(.server, "spawn failed: model file missing for \(configuration.modelIdentifier)")
+      MynaLog.error("spawn failed: model file missing for \(configuration.modelIdentifier)")
       throw LlamaServerError.modelMissing
     }
     // Crash safety: kill any orphaned server from a previous run of *our exact*
@@ -215,7 +211,7 @@ public actor LlamaServerHost {
 
     do { try process.run() } catch {
       apiToken = nil
-      MynaLog.error(.server, "spawn failed: process.run: \(error.localizedDescription)")
+      MynaLog.error("spawn failed: process.run: \(error.localizedDescription)")
       throw LlamaServerError.failedToLaunch(error.localizedDescription)
     }
     self.process = process
@@ -230,7 +226,7 @@ public actor LlamaServerHost {
       else {
         throw LlamaServerError.failedToLaunch("server did not retain ownership of its port")
       }
-      MynaLog.info(.server, "ready: port=\(chosenPort) model=\(configuration.modelIdentifier)")
+      MynaLog.info("ready: port=\(chosenPort) model=\(configuration.modelIdentifier)")
       ready = true
       startSupervisor()
       return Self.baseURL(port: chosenPort)
@@ -251,7 +247,7 @@ public actor LlamaServerHost {
     try? manager.createDirectory(at: directory, withIntermediateDirectories: true)
     let url = directory.appendingPathComponent("llama-server.stderr.log")
     try? data.write(to: url, options: .atomic)
-    MynaLog.warn(.server, "stderr tail saved (\(data.count) bytes, reason=\(reason))")
+    MynaLog.warn("stderr tail saved (\(data.count) bytes, reason=\(reason))")
   }
 
   private func waitForListeningPort(process: Process) async throws -> Int {
@@ -259,9 +255,7 @@ public actor LlamaServerHost {
     let deadline = startedAt.addingTimeInterval(45)
     while Date() < deadline {
       if !process.isRunning {
-        MynaLog.error(
-          .server,
-          "exited during startup: status=\(process.terminationStatus) "
+        MynaLog.error("exited during startup: status=\(process.terminationStatus) "
             + "after=\(Int(Date().timeIntervalSince(startedAt)))s")
         throw LlamaServerError.failedToLaunch("server exited during startup")
       }
@@ -279,7 +273,7 @@ public actor LlamaServerHost {
       }
       try? await Task.sleep(for: .milliseconds(100))
     }
-    MynaLog.error(.server, "listening-port timeout after 45s: model=\(configuration.modelIdentifier)")
+    MynaLog.error("listening-port timeout after 45s: model=\(configuration.modelIdentifier)")
     throw LlamaServerError.healthTimeout
   }
 
@@ -288,9 +282,7 @@ public actor LlamaServerHost {
     let deadline = Date().addingTimeInterval(45)
     while Date() < deadline {
       if !process.isRunning {
-        MynaLog.error(
-          .server,
-          "exited during startup: status=\(process.terminationStatus) "
+        MynaLog.error("exited during startup: status=\(process.terminationStatus) "
             + "after=\(Int(Date().timeIntervalSince(startedAt)))s")
         throw LlamaServerError.failedToLaunch("server exited during startup")
       }
@@ -302,7 +294,7 @@ public actor LlamaServerHost {
       }
       try? await Task.sleep(for: .milliseconds(400))
     }
-    MynaLog.error(.server, "health timeout after 45s: model=\(configuration.modelIdentifier)")
+    MynaLog.error("health timeout after 45s: model=\(configuration.modelIdentifier)")
     terminate()
     throw LlamaServerError.healthTimeout
   }
@@ -321,7 +313,7 @@ public actor LlamaServerHost {
     guard process?.isRunning == true,
       Self.shouldUnload(now: Date(), lastUsed: lastUsed, idleTimeout: configuration.idleTimeout)
     else { return }
-    MynaLog.info(.server, "idle unload after \(Int(configuration.idleTimeout))s")
+    MynaLog.info("idle unload after \(Int(configuration.idleTimeout))s")
     terminate()
   }
 
@@ -449,34 +441,6 @@ public actor LlamaServerHost {
     ]
   }
 
-  /// Ask the OS for an unused loopback TCP port by binding to port 0 and
-  /// reading back the assignment. A tiny reuse race is covered by respawn.
-  static func freeLoopbackPort() -> Int? {
-    let fd = socket(AF_INET, SOCK_STREAM, 0)
-    guard fd >= 0 else { return nil }
-    defer { close(fd) }
-    var addr = sockaddr_in()
-    addr.sin_family = sa_family_t(AF_INET)
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-    addr.sin_port = 0
-    let bound = withUnsafePointer(to: &addr) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-      }
-    }
-    guard bound == 0 else { return nil }
-    var result = sockaddr_in()
-    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-    let named = withUnsafeMutablePointer(to: &result) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        getsockname(fd, $0, &length)
-      }
-    }
-    guard named == 0 else { return nil }
-    let assigned = Int(UInt16(bigEndian: result.sin_port))
-    return assigned > 0 ? assigned : nil
-  }
-
   /// Best-effort: terminate any process whose executable is exactly ours.
   private func killOrphans(executablePath: String) {
     let pkill = Process()
@@ -508,19 +472,18 @@ public actor LlamaServerHost {
 
 /// Logging shim keeping the port line-for-line comparable with Myna's file.
 enum MynaLog {
-  enum Category { case server, provider }
   private static let logger = Logger(
     subsystem: "com.itssrb24.MynaFlow", category: "llm")
 
-  static func info(_ category: Category, _ message: String) {
+  static func info(_ message: String) {
     logger.info("\(message, privacy: .public)")
     DiagnosticsLog.shared.write("info", "llm", message)
   }
-  static func warn(_ category: Category, _ message: String) {
+  static func warn(_ message: String) {
     logger.warning("\(message, privacy: .public)")
     DiagnosticsLog.shared.write("warn", "llm", message)
   }
-  static func error(_ category: Category, _ message: String) {
+  static func error(_ message: String) {
     logger.error("\(message, privacy: .public)")
     DiagnosticsLog.shared.write("error", "llm", message)
   }

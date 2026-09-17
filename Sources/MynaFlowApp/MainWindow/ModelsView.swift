@@ -17,15 +17,15 @@ struct ModelsView: View {
       VStack(alignment: .leading, spacing: Theme.Spacing.md) {
         SectionLabel(text: "Speech engines")
         engineRow(
-          name: "Apple Speech",
-          detail: "Built into macOS. Always the fallback. \(coordinator.speechStatusLine.replacingOccurrences(of: "Apple Speech: ", with: ""))",
+          name: EngineID.apple.displayName,
+          detail: "Built into macOS. Always the fallback. \(coordinator.speechStatusLine.replacingOccurrences(of: "\(EngineID.apple.displayName): ", with: ""))",
           trailing: {
             Text(coordinator.engineChoice == .apple ? "In use" : "Fallback")
               .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textSecondary)
           })
         engineRow(
-          name: "Parakeet",
-          detail: "FluidAudio's Parakeet on the Neural Engine. Better on names and jargon. ~600 MB.",
+          name: EngineID.parakeet.displayName,
+          detail: "FluidAudio's Parakeet on the Neural Engine. Better on names and jargon. ~\(ParakeetEngine.approximateDownloadMegabytes) MB.",
           trailing: { parakeetControls })
         if coordinator.parakeetInstalled {
           engineRow(
@@ -146,7 +146,7 @@ struct ModelsView: View {
             .buttonStyle(.plain).font(Theme.Fonts.caption)
             .foregroundStyle(Theme.Colors.textTertiary)
         }
-      case .checkingDisk, .verifying, .paused:
+      case .checkingDisk, .verifying:
         ProgressView().controlSize(.small)
       case .installed:
         HStack(spacing: Theme.Spacing.sm) {

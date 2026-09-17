@@ -2,8 +2,8 @@ import Foundation
 import MynaFlowCore
 
 /// Watches the field that just received a dictation for a short window and
-/// logs the user's first edit as a correction candidate. Data collection
-/// only — nothing learns from it yet.
+/// logs the user's first edit as a correction candidate. The pairs it records
+/// feed `StyleProfileLearner`, which turns repeated corrections into rules.
 @MainActor
 final class CorrectionWatcher {
   private var task: Task<Void, Never>?
