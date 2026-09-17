@@ -145,9 +145,10 @@ public actor LlamaServerHost {
   // MARK: Lifecycle
 
   private func ensureReady() async throws -> URL {
-    if let port, let process, process.isRunning, ready,
-      Self.processOwnsListeningPort(processIdentifier: process.processIdentifier, port: port)
-    {
+    // Port ownership is verified once at spawn (below). Re-running lsof on
+    // every request blocked the actor for a process spawn per polish; a
+    // server that died is caught by `isRunning` and respawned instead.
+    if let port, let process, process.isRunning, ready {
       return Self.baseURL(port: port)
     }
     if let loadTask { return try await loadTask.value }
@@ -224,7 +225,7 @@ public actor LlamaServerHost {
       self.port = chosenPort
       try await waitForHealth(port: chosenPort, process: process)
       guard process.isRunning,
-        Self.processOwnsListeningPort(
+        await Self.processOwnsListeningPort(
           processIdentifier: process.processIdentifier, port: chosenPort)
       else {
         throw LlamaServerError.failedToLaunch("server did not retain ownership of its port")
@@ -265,10 +266,16 @@ public actor LlamaServerHost {
         throw LlamaServerError.failedToLaunch("server exited during startup")
       }
       let output = stderrTail.withLock { String(decoding: $0.data, as: UTF8.self) }
-      if let port = Self.reportedListeningPort(in: output),
-        Self.processOwnsListeningPort(processIdentifier: process.processIdentifier, port: port)
-      {
-        return port
+      if let port = Self.reportedListeningPort(in: output) {
+        // One off-actor probe per announcement; the listener may need a
+        // moment to bind after logging, so a miss waits longer than a poll.
+        if await Self.processOwnsListeningPort(
+          processIdentifier: process.processIdentifier, port: port)
+        {
+          return port
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        continue
       }
       try? await Task.sleep(for: .milliseconds(100))
     }
@@ -399,21 +406,25 @@ public actor LlamaServerHost {
   /// Confirms that the selected listener belongs to the exact child PID. This
   /// prevents a forged stderr line from redirecting authenticated requests to
   /// another same-user loopback process.
-  static func processOwnsListeningPort(processIdentifier: Int32, port: Int) -> Bool {
+  /// Runs the `lsof` probe off the actor so its blocking wait never stalls
+  /// polish requests or the spawn path.
+  nonisolated static func processOwnsListeningPort(processIdentifier: Int32, port: Int) async -> Bool {
     guard processIdentifier > 0, (1...65_535).contains(port) else { return false }
-    let probe = Process()
-    probe.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-    probe.arguments = listeningPortOwnerArguments(
-      processIdentifier: processIdentifier, port: port)
-    probe.standardOutput = FileHandle.nullDevice
-    probe.standardError = FileHandle.nullDevice
-    do {
-      try probe.run()
-      probe.waitUntilExit()
-      return probe.terminationStatus == 0
-    } catch {
-      return false
-    }
+    let arguments = listeningPortOwnerArguments(processIdentifier: processIdentifier, port: port)
+    return await Task.detached(priority: .utility) {
+      let probe = Process()
+      probe.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+      probe.arguments = arguments
+      probe.standardOutput = FileHandle.nullDevice
+      probe.standardError = FileHandle.nullDevice
+      do {
+        try probe.run()
+        probe.waitUntilExit()
+        return probe.terminationStatus == 0
+      } catch {
+        return false
+      }
+    }.value
   }
 
   static func listeningPortOwnerArguments(processIdentifier: Int32, port: Int) -> [String] {
