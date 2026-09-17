@@ -3,3 +3,6 @@
 dist/
 *.xcodeproj
 .DS_Store
+graphify-out/
+.claude/
+CLAUDE.md

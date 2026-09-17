@@ -37,9 +37,19 @@ struct ModelsView: View {
 
       VStack(alignment: .leading, spacing: Theme.Spacing.md) {
         SectionLabel(text: "Polish language model")
-        Text("Only polish needs this. Recommended: \(SetupAdvisor.largestRunnableLanguageModel(on: hardware)?.displayName ?? "none fits this Mac"). Loads on first polish, unloads after 5 idle minutes.")
+        Text("Only polish needs this. Recommended: \(SetupAdvisor.largestRunnableLanguageModel(on: hardware)?.displayName ?? "none fits this Mac"). Loads on first polish.")
           .font(Theme.Fonts.caption)
           .foregroundStyle(Theme.Colors.textTertiary)
+        HStack(spacing: Theme.Spacing.sm) {
+          Text("Unload after idle").font(Theme.Fonts.body).foregroundStyle(Theme.Colors.textPrimary)
+          Stepper(
+            "\(coordinator.idleUnloadMinutes) min",
+            value: Binding(
+              get: { coordinator.idleUnloadMinutes },
+              set: { coordinator.setIdleUnloadMinutes($0) }),
+            in: 1...120)
+            .font(Theme.Fonts.mono).foregroundStyle(Theme.Colors.textPrimary)
+        }
         ForEach(DefaultModelCatalog.language) { descriptor in
           modelRow(descriptor)
         }

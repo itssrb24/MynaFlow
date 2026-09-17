@@ -27,6 +27,8 @@ public struct TranscriptCleaner: Sendable {
   private let protectedWords: Set<String>
   /// Approved, enabled learning-layer rules; empty by default.
   private let learned: LearnedRules
+  /// Words the user added to the filler list in settings.
+  private let userFillers: Set<String>
 
   private static let singleFillers: Set<String> = [
     "um", "umm", "uh", "uhh", "er", "erm", "ah", "hmm", "mmm",
@@ -38,7 +40,10 @@ public struct TranscriptCleaner: Sendable {
   private static let repetitionGuard: Set<String> = ["had", "very", "really"]
   private static let maxFalseStartWords = 4
 
-  public init(protectedTerms: [String] = [], learnedRules: LearnedRules = LearnedRules()) {
+  public init(
+    protectedTerms: [String] = [], learnedRules: LearnedRules = LearnedRules(),
+    userFillers: [String] = []
+  ) {
     var words: Set<String> = []
     for term in protectedTerms {
       for word in term.split(separator: " ") {
@@ -47,6 +52,9 @@ public struct TranscriptCleaner: Sendable {
     }
     protectedWords = words
     learned = learnedRules
+    self.userFillers = Set(
+      userFillers.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        .filter { !$0.isEmpty })
   }
 
   public func clean(_ raw: String, enabled: Bool = true) -> CleanupResult {
@@ -125,7 +133,7 @@ public struct TranscriptCleaner: Sendable {
     guard !isProtected(token) else { return nil }
     let core = token.core.lowercased()
 
-    if Self.singleFillers.contains(core) {
+    if Self.singleFillers.contains(core) || userFillers.contains(core) {
       return 1
     }
     if learned.isActive, learned.fillers.contains(core) {

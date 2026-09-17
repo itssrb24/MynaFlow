@@ -25,6 +25,8 @@ final class DictationSession {
   private var startTask: Task<Void, Never>?
 
   var toggleMaximumDuration: Duration = .seconds(600)
+  /// Subtle start/stop ticks; off by default.
+  var soundFeedback = false
   /// Whether the controller is busy with a previous dictation (processing or
   /// inserting) — decides what a refused start should do to the indicator.
   var isControllerBusy: () -> Bool = { false }
@@ -76,9 +78,11 @@ final class DictationSession {
       beginStart(mode)
     case .startCapture:
       startCapture()
+      if soundFeedback { NSSound(named: "Tink")?.play() }
     case .stopCapture:
       stopElapsedTimer()
       capture.stop()
+      if soundFeedback { NSSound(named: "Pop")?.play() }
     case .cancelController:
       frameCollector?.cancel()
       frameCollector = nil

@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 
 /// What the floating indicator is currently saying.
@@ -41,11 +42,26 @@ private final class UnconstrainedPanel: NSPanel {
 
 /// Floating indicator anchored bottom-center of the active screen. Never
 /// steals focus, joins all Spaces, floats over full-screen apps.
+enum IndicatorPlacement: String, CaseIterable {
+  case bottomCenter, topCenter
+
+  var displayName: String {
+    switch self {
+    case .bottomCenter: "Bottom center"
+    case .topCenter: "Top center"
+    }
+  }
+}
+
 @MainActor
 final class IndicatorPanelController {
   private static let contentSize = NSSize(width: 260, height: 64)
   private static let shadowMargin: CGFloat = 30
-  private static let bottomInset: CGFloat = 24
+  private static let edgeInset: CGFloat = 24
+
+  var placement: IndicatorPlacement = .bottomCenter {
+    didSet { position() }
+  }
 
   private let panel: NSPanel
   private var hideTask: Task<Void, Never>?
@@ -102,13 +118,59 @@ final class IndicatorPanelController {
     }
   }
 
+  /// The screen the user is looking at: the one holding the frontmost app's
+  /// focused window, else the one under the mouse, else main. `NSScreen.main`
+  /// alone follows *our* key window, which a menu bar app rarely has.
+  private func targetScreen() -> NSScreen? {
+    if let application = NSWorkspace.shared.frontmostApplication,
+      let rect = Self.focusedWindowFrame(of: application)
+    {
+      let center = NSPoint(x: rect.midX, y: rect.midY)
+      if let screen = NSScreen.screens.first(where: { $0.frame.contains(center) }) {
+        return screen
+      }
+    }
+    let mouse = NSEvent.mouseLocation
+    return NSScreen.screens.first(where: { $0.frame.contains(mouse) })
+      ?? NSScreen.main ?? NSScreen.screens.first
+  }
+
+  /// Cocoa-space frame of the frontmost app's focused window via AX.
+  private static func focusedWindowFrame(of application: NSRunningApplication) -> NSRect? {
+    let element = AXUIElementCreateApplication(application.processIdentifier)
+    var windowRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute as CFString, &windowRef) == .success,
+      let windowRef, CFGetTypeID(windowRef) == AXUIElementGetTypeID()
+    else { return nil }
+    let window = windowRef as! AXUIElement
+    var positionRef: CFTypeRef?
+    var sizeRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionRef) == .success,
+      AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef) == .success,
+      let positionRef, let sizeRef
+    else { return nil }
+    var position = CGPoint.zero
+    var size = CGSize.zero
+    guard AXValueGetValue(positionRef as! AXValue, .cgPoint, &position),
+      AXValueGetValue(sizeRef as! AXValue, .cgSize, &size),
+      let primary = NSScreen.screens.first
+    else { return nil }
+    // AX is top-left origin; Cocoa is bottom-left against the primary screen.
+    let cocoaY = primary.frame.maxY - (position.y + size.height)
+    return NSRect(x: position.x, y: cocoaY, width: size.width, height: size.height)
+  }
+
   private func position() {
-    guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+    guard let screen = targetScreen() else { return }
     let visible = screen.visibleFrame
-    let origin = NSPoint(
-      x: visible.midX - panel.frame.width / 2,
-      y: visible.minY + Self.bottomInset - Self.shadowMargin)
-    panel.setFrameOrigin(origin)
+    let y: CGFloat
+    switch placement {
+    case .bottomCenter:
+      y = visible.minY + Self.edgeInset - Self.shadowMargin
+    case .topCenter:
+      y = visible.maxY - Self.edgeInset - Self.contentSize.height - Self.shadowMargin
+    }
+    panel.setFrameOrigin(NSPoint(x: visible.midX - panel.frame.width / 2, y: y))
   }
 }
 

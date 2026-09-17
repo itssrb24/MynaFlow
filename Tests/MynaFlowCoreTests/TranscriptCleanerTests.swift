@@ -86,6 +86,14 @@ struct TranscriptCleanerTests {
     #expect(cleaned.text == "We listened to Umm Kulthum records.")
   }
 
+  @Test("User-added filler words are removed like the built-in list")
+  func userFillers() {
+    let custom = TranscriptCleaner(userFillers: ["basically", "right"])
+    #expect(custom.clean("Basically we ship it, right.").text == "We ship it.")
+    // The default list is unaffected.
+    #expect(cleaner.clean("Basically we ship it.").text == "Basically we ship it.")
+  }
+
   @Test("Removals report the dropped spans")
   func removalsReported() {
     let result = cleaner.clean("Um, so this is is a test.")

@@ -52,6 +52,12 @@ final class AppCoordinator {
   private(set) var typingWPM: Double = 40
   // Learning layer
   private(set) var learningEnabled = false
+  // Preferences (B5–B9)
+  private(set) var userFillers: [String] = []
+  private(set) var indicatorPlacement: IndicatorPlacement = .bottomCenter
+  private(set) var soundFeedback = false
+  private(set) var toggleMaximumMinutes = 10
+  private(set) var idleUnloadMinutes = 5
   private(set) var suggestedRules: [StoredLearnedRule] = []
   private(set) var approvedRules: [StoredLearnedRule] = []
   private let correctionWatcher = CorrectionWatcher()
@@ -118,6 +124,20 @@ final class AppCoordinator {
       await refreshVocabulary()
       learningEnabled = (try? await store.setting(forKey: "learning_enabled")) == "1"
       await refreshLearnedRules()
+      userFillers = BiasTerms.split((try? await store.setting(forKey: "filler_words")) ?? "")
+      if let raw = try? await store.setting(forKey: "indicator_placement"),
+        let placement = IndicatorPlacement(rawValue: raw)
+      {
+        indicatorPlacement = placement
+        indicatorPanel?.placement = placement
+      }
+      soundFeedback = (try? await store.setting(forKey: "sound_feedback")) == "1"
+      if let raw = try? await store.setting(forKey: "toggle_max_minutes"), let value = Int(raw), value > 0 {
+        toggleMaximumMinutes = value
+      }
+      if let raw = try? await store.setting(forKey: "idle_unload_minutes"), let value = Int(raw), value > 0 {
+        idleUnloadMinutes = value
+      }
 
       let controller = makeController(store: store, scratch: paths.scratch)
       await controller.setCleanupEnabled(cleanupEnabled)
@@ -184,7 +204,8 @@ final class AppCoordinator {
       engine: provider,
       cleaner: TranscriptCleaner(
         protectedTerms: vocabulary.map(\.term),
-        learnedRules: LearnedRules(approved: approvedRules.map(\.rule), enabled: learningEnabled)),
+        learnedRules: LearnedRules(approved: approvedRules.map(\.rule), enabled: learningEnabled),
+        userFillers: userFillers),
       store: store,
       scratchDirectory: scratch,
       dependencies: DictationDependencies(
@@ -488,7 +509,7 @@ final class AppCoordinator {
         executableURL: serverURL,
         modelURL: modelURL,
         modelIdentifier: descriptor.id,
-        idleTimeout: 300,
+        idleTimeout: TimeInterval(idleUnloadMinutes * 60),
         diagnosticsDirectory: paths.diagnostics))
     let provider = LanguageModelProvider(
       host: host, cliExecutableURL: cliURL, modelURL: modelURL)
@@ -775,6 +796,40 @@ final class AppCoordinator {
     }
   }
 
+  func setUserFillers(_ text: String) {
+    userFillers = BiasTerms.split(text)
+    Task {
+      await persist("save filler words") { try await store?.setSetting(text, forKey: "filler_words") }
+      await rebuildControllerForVocabulary()
+    }
+  }
+
+  func setIndicatorPlacement(_ placement: IndicatorPlacement) {
+    indicatorPlacement = placement
+    indicatorPanel?.placement = placement
+    Task { await persist("save indicator position") { try await store?.setSetting(placement.rawValue, forKey: "indicator_placement") } }
+  }
+
+  func setSoundFeedback(_ enabled: Bool) {
+    soundFeedback = enabled
+    session?.soundFeedback = enabled
+    Task { await persist("save sound setting") { try await store?.setSetting(enabled ? "1" : "0", forKey: "sound_feedback") } }
+  }
+
+  func setToggleMaximumMinutes(_ minutes: Int) {
+    toggleMaximumMinutes = max(1, minutes)
+    session?.toggleMaximumDuration = .seconds(toggleMaximumMinutes * 60)
+    Task { await persist("save toggle limit") { try await store?.setSetting("\(toggleMaximumMinutes)", forKey: "toggle_max_minutes") } }
+  }
+
+  func setIdleUnloadMinutes(_ minutes: Int) {
+    idleUnloadMinutes = max(1, minutes)
+    Task {
+      await languageProvider?.setIdleTimeout(TimeInterval(idleUnloadMinutes * 60))
+      await persist("save idle unload") { try await store?.setSetting("\(idleUnloadMinutes)", forKey: "idle_unload_minutes") }
+    }
+  }
+
   func setCleanupEnabled(_ enabled: Bool) {
     cleanupEnabled = enabled
     Task {
@@ -964,6 +1019,8 @@ final class AppCoordinator {
       default: false
       }
     }
+    session.toggleMaximumDuration = .seconds(toggleMaximumMinutes * 60)
+    session.soundFeedback = soundFeedback
     session.onFinished = { [weak self] in await self?.refreshRecentDictations() }
     session.onError = { [weak self] message in
       self?.indicator.display = .error(message)

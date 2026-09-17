@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AudioView: View {
   let coordinator: AppCoordinator
+  @State private var fillerText = ""
 
   var body: some View {
     Page(title: "Audio & General", subtitle: "Microphone, cleanup, and startup.") {
@@ -56,9 +57,53 @@ struct AudioView: View {
         }
         .toggleStyle(.switch)
         .tint(Theme.Colors.accent)
+
+        SectionLabel(text: "Your filler words")
+        HStack(spacing: Theme.Spacing.sm) {
+          NeuTextField(placeholder: "basically, right, so yeah", text: $fillerText)
+            .onSubmit { coordinator.setUserFillers(fillerText) }
+          Button("Save") { coordinator.setUserFillers(fillerText) }
+            .buttonStyle(NeuButtonStyle())
+        }
+        Text("Comma-separated. Added to the built-in list (um, uh, er…). Vocabulary terms are never treated as fillers.")
+          .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
+      }
+      .raised()
+
+      VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+        SectionLabel(text: "Indicator")
+        Picker("Position", selection: Binding(
+          get: { coordinator.indicatorPlacement },
+          set: { coordinator.setIndicatorPlacement($0) })
+        ) {
+          ForEach(IndicatorPlacement.allCases, id: \.self) { Text($0.displayName).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 320)
+        Text("Shown on the screen with the app you're dictating into.")
+          .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
+        Toggle(isOn: Binding(
+          get: { coordinator.soundFeedback },
+          set: { coordinator.setSoundFeedback($0) })
+        ) {
+          Text("Sound on start and stop").font(Theme.Fonts.bodyStrong).foregroundStyle(Theme.Colors.textPrimary)
+        }
+        .toggleStyle(.switch)
+        .tint(Theme.Colors.accent)
+        HStack(spacing: Theme.Spacing.sm) {
+          Text("Toggle mode auto-stops after").font(Theme.Fonts.body).foregroundStyle(Theme.Colors.textPrimary)
+          Stepper(
+            "\(coordinator.toggleMaximumMinutes) min",
+            value: Binding(
+              get: { coordinator.toggleMaximumMinutes },
+              set: { coordinator.setToggleMaximumMinutes($0) }),
+            in: 1...60)
+            .font(Theme.Fonts.mono).foregroundStyle(Theme.Colors.textPrimary)
+        }
       }
       .raised()
     }
+    .task { fillerText = coordinator.userFillers.joined(separator: ", ") }
   }
 
   private func deviceRow(uid: String?, name: String, detail: String?) -> some View {
