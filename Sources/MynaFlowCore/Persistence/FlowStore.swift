@@ -38,6 +38,72 @@ public actor FlowStore {
     (try? scalarInt("PRAGMA user_version")) ?? 0
   }
 
+  // MARK: - App rules
+
+  public func appRules() throws -> [AppRule] {
+    try query(
+      "SELECT bundle_id, cleanup_enabled, terminal_period, polish_style_id FROM app_rules ORDER BY bundle_id",
+      bind: { _ in }, row: readAppRule)
+  }
+
+  public func appRule(for bundleID: String) throws -> AppRule? {
+    try query(
+      "SELECT bundle_id, cleanup_enabled, terminal_period, polish_style_id FROM app_rules WHERE bundle_id = ?1",
+      bind: { sqlite3_bind_text($0, 1, bundleID, -1, sqliteTransient) }, row: readAppRule
+    ).first
+  }
+
+  /// Insert-or-replace; an empty rule is removed instead of stored.
+  public func upsertAppRule(_ rule: AppRule) throws {
+    if rule.isEmpty {
+      try deleteAppRule(bundleID: rule.bundleID)
+      return
+    }
+    try run(
+      """
+      INSERT INTO app_rules (bundle_id, cleanup_enabled, terminal_period, polish_style_id, updated_at)
+      VALUES (?1, ?2, ?3, ?4, ?5)
+      ON CONFLICT(bundle_id) DO UPDATE SET
+        cleanup_enabled = excluded.cleanup_enabled,
+        terminal_period = excluded.terminal_period,
+        polish_style_id = excluded.polish_style_id,
+        updated_at = excluded.updated_at
+      """,
+      bind: { statement in
+        sqlite3_bind_text(statement, 1, rule.bundleID, -1, sqliteTransient)
+        bindOptionalBool(statement, 2, rule.cleanupEnabled)
+        bindOptionalBool(statement, 3, rule.terminalPeriod)
+        bindOptionalText(statement, 4, rule.polishStyleID?.uuidString)
+        sqlite3_bind_double(statement, 5, Date().timeIntervalSince1970)
+      })
+  }
+
+  public func deleteAppRule(bundleID: String) throws {
+    try run(
+      "DELETE FROM app_rules WHERE bundle_id = ?1",
+      bind: { sqlite3_bind_text($0, 1, bundleID, -1, sqliteTransient) })
+  }
+
+  private func bindOptionalBool(_ statement: OpaquePointer, _ index: Int32, _ value: Bool?) {
+    if let value {
+      sqlite3_bind_int(statement, index, value ? 1 : 0)
+    } else {
+      sqlite3_bind_null(statement, index)
+    }
+  }
+
+  private func columnOptionalBool(_ statement: OpaquePointer, _ index: Int32) -> Bool? {
+    sqlite3_column_type(statement, index) == SQLITE_NULL ? nil : sqlite3_column_int(statement, index) != 0
+  }
+
+  private func readAppRule(_ statement: OpaquePointer) throws -> AppRule {
+    AppRule(
+      bundleID: columnText(statement, 0) ?? "",
+      cleanupEnabled: columnOptionalBool(statement, 1),
+      terminalPeriod: columnOptionalBool(statement, 2),
+      polishStyleID: columnText(statement, 3).flatMap(UUID.init(uuidString:)))
+  }
+
   // MARK: - Dictations
 
   public func insert(_ record: DictationRecord) throws {
@@ -638,6 +704,18 @@ public actor FlowStore {
     // v4: why an insertion fell back, for the History tooltip.
     [
       "ALTER TABLE dictations ADD COLUMN insertion_diagnostics TEXT"
+    ],
+    // v5: per-app rules. Deleting a style clears the rules that used it.
+    [
+      """
+      CREATE TABLE app_rules (
+        bundle_id TEXT PRIMARY KEY,
+        cleanup_enabled INTEGER,
+        terminal_period INTEGER,
+        polish_style_id TEXT REFERENCES styles(id) ON DELETE SET NULL,
+        updated_at REAL NOT NULL
+      )
+      """
     ],
   ]
 

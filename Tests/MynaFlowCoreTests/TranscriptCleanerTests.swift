@@ -94,6 +94,13 @@ struct TranscriptCleanerTests {
     #expect(cleaner.clean("Basically we ship it.").text == "Basically we ship it.")
   }
 
+  @Test("Terminal punctuation can be left off for chat-style targets")
+  func noTerminalPunctuation() {
+    #expect(cleaner.clean("um send it now", terminalPunctuation: false).text == "Send it now")
+    // Punctuation the speaker supplied is kept either way.
+    #expect(cleaner.clean("Really?", terminalPunctuation: false).text == "Really?")
+  }
+
   @Test("Removals report the dropped spans")
   func removalsReported() {
     let result = cleaner.clean("Um, so this is is a test.")

@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum MainSection: String, CaseIterable, Identifiable {
-  case history, insights, styles, vocabulary, learning, hotkeys, audio, models
+  case history, insights, styles, apps, vocabulary, learning, hotkeys, audio, models
   var id: String { rawValue }
 
   var title: String {
@@ -9,6 +9,7 @@ enum MainSection: String, CaseIterable, Identifiable {
     case .history: "History"
     case .insights: "Insights"
     case .styles: "Styles"
+    case .apps: "Apps"
     case .vocabulary: "Vocabulary"
     case .learning: "Learning"
     case .hotkeys: "Hotkeys"
@@ -22,6 +23,7 @@ enum MainSection: String, CaseIterable, Identifiable {
     case .history: "clock.arrow.circlepath"
     case .insights: "chart.bar.xaxis"
     case .styles: "wand.and.sparkles"
+    case .apps: "macwindow.on.rectangle"
     case .vocabulary: "character.book.closed"
     case .learning: "brain"
     case .hotkeys: "keyboard"
@@ -79,6 +81,7 @@ struct MainWindowView: View {
     case .history: HistoryView(coordinator: coordinator)
     case .insights: InsightsView(coordinator: coordinator)
     case .styles: StylesView(coordinator: coordinator)
+    case .apps: AppRulesView(coordinator: coordinator)
     case .vocabulary: VocabularyView(coordinator: coordinator)
     case .learning: LearningView(coordinator: coordinator)
     case .hotkeys: HotkeysView(coordinator: coordinator)

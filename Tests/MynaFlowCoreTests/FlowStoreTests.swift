@@ -56,7 +56,7 @@ struct FlowStoreTests {
     let url = temporaryDatabaseURL()
     let store = try await FlowStore.open(at: url)
     let version = await store.schemaVersion()
-    #expect(version == 4)
+    #expect(version == 5)
 
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     let permissions = try #require(attributes[.posixPermissions] as? NSNumber)

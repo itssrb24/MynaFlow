@@ -68,6 +68,10 @@ public actor DictationController {
   private let dependencies: DictationDependencies
   private var cleanupEnabled = true
   private var hints: @Sendable () async -> [String] = { [] }
+  private var appRule: @Sendable (String?) async -> AppRule? = { _ in nil }
+  /// Rewrites text in the style with this id; nil means "leave it alone"
+  /// (model missing, timed out, or failed) — the cleaned text is inserted.
+  private var polisher: @Sendable (UUID, String) async -> (text: String, styleName: String)? = { _, _ in nil }
   private var onEvent: @Sendable (DictationControllerEvent) -> Void = { _ in }
   private func onStateChange(_ state: DictationState) { onEvent(.state(state)) }
   private func onOutcome(_ outcome: DictationOutcome) { onEvent(.outcome(outcome)) }
@@ -94,6 +98,16 @@ public actor DictationController {
 
   public func setHintsProvider(_ provider: @escaping @Sendable () async -> [String]) {
     hints = provider
+  }
+
+  public func setAppRuleProvider(_ provider: @escaping @Sendable (String?) async -> AppRule?) {
+    appRule = provider
+  }
+
+  public func setPolisher(
+    _ polisher: @escaping @Sendable (UUID, String) async -> (text: String, styleName: String)?
+  ) {
+    self.polisher = polisher
   }
 
   /// Single ordered observer for state transitions and outcomes. Called
@@ -196,11 +210,22 @@ public actor DictationController {
     }
     let transcription = engineOutcome.result
 
-    let cleaned = cleaner.clean(transcription.text, enabled: cleanupEnabled)
-    let text = cleaned.text
+    let rule = await appRule(session?.targetApplication)
+    let cleaned = cleaner.clean(
+      transcription.text,
+      enabled: rule?.cleanupEnabled ?? cleanupEnabled,
+      terminalPunctuation: rule?.terminalPeriod ?? true)
+    var text = cleaned.text
     guard !text.isEmpty else {
       await failDictation("Nothing recognized")
       return
+    }
+    var styleApplied: String?
+    if let styleID = rule?.polishStyleID, let polished = await polisher(styleID, text),
+      !polished.text.isEmpty
+    {
+      text = polished.text
+      styleApplied = polished.styleName
     }
     // The actor was suspended during transcription; a cancel may have landed
     // meanwhile. A cancelled dictation must produce no side effects at all.
@@ -248,8 +273,9 @@ public actor DictationController {
     let record = DictationRecord(
       timestamp: session?.startedAt ?? Date(),
       rawTranscript: transcription.text,
-      cleanedText: text,
+      cleanedText: cleaned.text,
       finalText: text,
+      styleApplied: styleApplied,
       engineUsed: engineOutcome.engineUsed.rawValue,
       fallbackOccurred: engineOutcome.fallbackOccurred,
       durationSeconds: transcription.durationSeconds,

@@ -57,7 +57,11 @@ public struct TranscriptCleaner: Sendable {
         .filter { !$0.isEmpty })
   }
 
-  public func clean(_ raw: String, enabled: Bool = true) -> CleanupResult {
+  /// `terminalPunctuation: false` leaves the end of the text as spoken
+  /// (chat and terminal apps), instead of appending a period.
+  public func clean(_ raw: String, enabled: Bool = true, terminalPunctuation: Bool = true)
+    -> CleanupResult
+  {
     guard enabled else { return CleanupResult(text: raw, removals: []) }
 
     var tokens = Self.tokenize(raw)
@@ -66,7 +70,7 @@ public struct TranscriptCleaner: Sendable {
     removeFalseStarts(&tokens, removals: &removals)
     collapseRepetitions(&tokens, removals: &removals)
     applyReplacements(&tokens)
-    repairSeams(&tokens)
+    repairSeams(&tokens, terminalPunctuation: terminalPunctuation)
     return CleanupResult(text: Self.render(tokens), removals: removals)
   }
 
@@ -258,14 +262,14 @@ public struct TranscriptCleaner: Sendable {
     }
   }
 
-  private func repairSeams(_ tokens: inout [Token]) {
+  private func repairSeams(_ tokens: inout [Token], terminalPunctuation: Bool) {
     for index in tokens.indices where tokens[index].needsCapital {
       let core = tokens[index].core
       guard let first = core.first, first.isLowercase else { continue }
       tokens[index].core = first.uppercased() + core.dropFirst()
     }
     guard let last = tokens.indices.last, !tokens[last].core.isEmpty else { return }
-    if learned.isActive, learned.stripsTerminalPeriod {
+    if !terminalPunctuation || (learned.isActive && learned.stripsTerminalPeriod) {
       if tokens[last].suffix.hasSuffix(".") { tokens[last].suffix.removeLast() }
       return
     }

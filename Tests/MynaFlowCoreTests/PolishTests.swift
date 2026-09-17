@@ -166,7 +166,7 @@ struct FlowStoreStyleTests {
   @Test("Schema migrates to v2 and seeded styles carry empty examples")
   func migratesToV2() async throws {
     let store = try await FlowStore.open(at: temporaryDatabaseURL())
-    #expect(await store.schemaVersion() == 4)
+    #expect(await store.schemaVersion() == 5)
     let styles = try await store.styles()
     #expect(styles.allSatisfy { $0.examples.isEmpty })
     await store.close()

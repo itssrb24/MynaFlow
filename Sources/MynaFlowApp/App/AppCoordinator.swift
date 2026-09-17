@@ -60,6 +60,7 @@ final class AppCoordinator {
   private var activePolish: PolishEngine?
   // Main window state
   private(set) var styles: [Style] = []
+  private(set) var appRules: [AppRule] = []
   private(set) var hotkeyConfiguration: HotkeyConfiguration = .default
   private(set) var inputDevices: [AudioInputDevice] = []
   private(set) var selectedInputUID: String?
@@ -285,6 +286,13 @@ final class AppCoordinator {
       await controller.setHintsProvider {
         let terms = (try? await store.vocabularyTerms().map(\.term)) ?? []
         return BiasTerms.sanitize(terms)
+      }
+      await controller.setAppRuleProvider { bundleID in
+        guard let bundleID else { return nil }
+        return try? await store.appRule(for: bundleID)
+      }
+      await controller.setPolisher { [weak self] styleID, text in
+        await self?.polishText(text, styleID: styleID)
       }
     }
     return controller
@@ -813,6 +821,45 @@ final class AppCoordinator {
   func refreshStyles() async {
     guard let store else { return }
     styles = (try? await store.styles()) ?? []
+    appRules = (try? await store.appRules()) ?? []
+  }
+
+  // MARK: App rules
+
+  func saveAppRule(_ rule: AppRule) {
+    Task {
+      await persist("save app rule") { try await store?.upsertAppRule(rule) }
+      await refreshStyles()
+    }
+  }
+
+  /// Rewrites text for auto-polish and the scratchpad. Nil on any failure so
+  /// callers fall back to the unpolished text; the cap keeps a stalled model
+  /// from holding a dictation hostage.
+  func polishText(_ text: String, styleID: UUID) async -> (text: String, styleName: String)? {
+    guard polishAvailable, let provider = languageProvider,
+      let style = styles.first(where: { $0.id == styleID })
+    else { return nil }
+    let instruction = PolishPrompt.compose(style: style, text: text)
+    let result: String?
+    do {
+      result = try await withThrowingTaskGroup(of: String.self) { group in
+        group.addTask { try await provider.generateInstruction(instruction, maxTokens: 1_024) }
+        group.addTask {
+          try await Task.sleep(for: .seconds(60))
+          throw CancellationError()
+        }
+        let first = try await group.next()
+        group.cancelAll()
+        return first
+      }
+    } catch {
+      diag("auto-polish failed (\(style.name)): \(error)")
+      result = nil
+    }
+    guard let trimmed = result?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty
+    else { return nil }
+    return (trimmed, style.name)
   }
 
   /// Saves a style; a slot can hold one style, so any other holder is unassigned.

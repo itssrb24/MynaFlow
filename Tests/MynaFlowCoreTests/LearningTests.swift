@@ -103,7 +103,7 @@ struct LearnedRuleStoreTests {
       .appendingPathComponent("flow-rules-\(UUID().uuidString)", isDirectory: true)
       .appendingPathComponent("flow.sqlite", isDirectory: false)
     let store = try await FlowStore.open(at: url)
-    #expect(await store.schemaVersion() == 4)
+    #expect(await store.schemaVersion() == 5)
 
     let rule = LearnedRule(kind: .replacement, pattern: "gonna", replacement: "going to", evidence: 2)
     try await store.upsertSuggestedRule(rule)

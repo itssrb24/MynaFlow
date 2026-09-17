@@ -105,6 +105,48 @@ private func makeController(
       }))
 }
 
+@Suite("DictationController app rules")
+struct DictationControllerAppRuleTests {
+  @Test("A rule with a polish style rewrites before insertion and records the style")
+  func rulePolishes() async throws {
+    let store = FakeStore()
+    let recorder = Recorder()
+    let controller = makeController(store: store, recorder: recorder)
+    let styleID = UUID()
+    await controller.setAppRuleProvider { app in
+      app == "com.apple.TextEdit" ? AppRule(bundleID: app!, polishStyleID: styleID) : nil
+    }
+    await controller.setPolisher { id, text in
+      id == styleID ? (text: "Greetings.", styleName: "Formal") : nil
+    }
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    #expect(recorder.insertedTexts == ["Greetings."])
+    let record = try #require(await store.records.first)
+    #expect(record.finalText == "Greetings.")
+    #expect(record.cleanedText == "Hello there.")
+    #expect(record.styleApplied == "Formal")
+  }
+
+  @Test("A failed polish inserts the cleaned text; a cleanup-off rule inserts the raw text")
+  func ruleFallbacks() async throws {
+    let store = FakeStore()
+    let recorder = Recorder()
+    let controller = makeController(store: store, recorder: recorder)
+    await controller.setAppRuleProvider { app in AppRule(bundleID: app!, polishStyleID: UUID()) }
+    await controller.setPolisher { _, _ in nil }
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    #expect(recorder.insertedTexts == ["Hello there."])
+
+    await controller.setAppRuleProvider { app in AppRule(bundleID: app!, cleanupEnabled: false) }
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    #expect(recorder.insertedTexts.last == "um hello there")
+    #expect(await store.records.last?.styleApplied == nil)
+  }
+}
+
 private func someFrames() -> [AudioFrame] {
   [AudioFrame(samples: [Float](repeating: 0.1, count: 1_600), sampleRate: 16_000)]
 }
