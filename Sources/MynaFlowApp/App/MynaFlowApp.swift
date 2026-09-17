@@ -97,6 +97,9 @@ struct MenuBarMenu: View {
     if coordinator.menuBarState != .idle {
       Button("Cancel Dictation") { coordinator.cancelDictation() }
     }
+    Button("Re-insert Last Dictation") { coordinator.reinsertLast() }
+      .disabled(coordinator.recentDictations.isEmpty)
+    Button("Undo Last Dictation") { coordinator.undoLastDictation() }
     Divider()
     if coordinator.recentDictations.isEmpty {
       Text("No dictations yet")
@@ -127,13 +130,12 @@ struct MenuBarMenu: View {
       }
     }
     if coordinator.polishModelInstalled {
-      Menu("Polish styles") {
+      Menu("Polish Selection") {
         ForEach(coordinator.styles) { style in
-          if let slot = style.hotkeySlot {
-            Text("\(style.name)  ·  slot \(slot)")
-          } else {
-            Text(style.name)
-          }
+          Button(style.name) { coordinator.polishSelection(style: style) }
+            .keyboardShortcutLabel(
+              style.hotkeySlot.flatMap { HotkeyAction.forSlot($0) }
+                .flatMap { coordinator.hotkeyConfiguration[$0]?.keycapLabel })
         }
       }
     } else if let fraction = coordinator.polishDownloadFraction {
@@ -159,5 +161,14 @@ struct MenuBarMenu: View {
   private func menuTitle(for record: DictationRecord) -> String {
     let text = record.finalText
     return text.count > 48 ? String(text.prefix(48)) + "…" : text
+  }
+}
+
+extension View {
+  /// Menus render a key hint after the title; a trailing label is the
+  /// closest stable rendering for chords the system does not own.
+  @ViewBuilder
+  func keyboardShortcutLabel(_ label: String?) -> some View {
+    if let label { self.help(label) } else { self }
   }
 }

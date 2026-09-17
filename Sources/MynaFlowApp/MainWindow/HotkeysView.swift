@@ -11,7 +11,9 @@ struct HotkeysView: View {
         SectionLabel(text: "Dictation")
         row(.dictationHold, note: "Recording starts on key down, ends on key up.")
         row(.dictationToggle, note: "Press to start, press again to stop. Auto-stops after 10 minutes.")
-        row(.cancel, note: "Discards the current dictation.")
+        row(.cancel, note: "Discards the current dictation (or a polish still thinking).")
+        row(.undoLast, note: "⌘Z in the app that just received a dictation (within 90 seconds).")
+        row(.reinsertLast, note: "Puts your most recent dictation at the cursor again.")
       }
       .raised()
 

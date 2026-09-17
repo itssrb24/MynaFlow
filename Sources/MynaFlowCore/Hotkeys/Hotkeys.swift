@@ -5,6 +5,10 @@ public enum HotkeyAction: String, CaseIterable, Codable, Sendable {
   case dictationHold
   case dictationToggle
   case cancel
+  /// ⌘Z in the app that just received a dictation.
+  case undoLast
+  /// Put the most recent dictation at the cursor again.
+  case reinsertLast
   /// Polish the selection with the style bound to this slot (1–5).
   case style1, style2, style3, style4, style5
 
@@ -13,6 +17,8 @@ public enum HotkeyAction: String, CaseIterable, Codable, Sendable {
     case .dictationHold: "Hold to talk"
     case .dictationToggle: "Toggle dictation"
     case .cancel: "Cancel"
+    case .undoLast: "Undo last dictation"
+    case .reinsertLast: "Re-insert last dictation"
     case .style1: "Style slot 1"
     case .style2: "Style slot 2"
     case .style3: "Style slot 3"
@@ -160,6 +166,8 @@ public struct HotkeyConfiguration: Codable, Equatable, Sendable {
       modifiers: NSEvent.ModifierFlags([.command, .control]).rawValue,
       keyLabel: "Space"),
     .cancel: HotkeyShortcut(keyCode: 53, modifiers: 0, keyLabel: "Esc"),
+    .undoLast: HotkeyShortcut(
+      keyCode: 6, modifiers: NSEvent.ModifierFlags([.command, .control]).rawValue, keyLabel: "Z"),
     // ⌃⌥ chords: the global monitor observes keys, it cannot swallow them,
     // and ⌥1 emits "¡" on a US layout — which would replace the user's
     // selection before the polish ever ran. ⌃-chords produce no character.

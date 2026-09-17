@@ -232,6 +232,9 @@ final class AppCoordinator {
           self.handleState(state)
         case .outcome(let outcome):
           self.lastOutcome = outcome
+          if outcome.insertionMethod == .ax, outcome.failureMessage == nil {
+            self.lastInsertionAt = Date()
+          }
           self.watchForCorrection(outcome)
         }
       }
@@ -667,7 +670,7 @@ final class AppCoordinator {
     await refreshRecentDictations()
   }
 
-  /// Puts the entry back at the cursor of the app the user came from.
+  /// From the window: go back to the app the user came from, then insert.
   func reinsert(_ record: DictationRecord) async {
     guard let target = lastExternalApp, !target.isTerminated else {
       copyToClipboard(record.finalText)
@@ -679,6 +682,11 @@ final class AppCoordinator {
     NSApp.hide(nil)
     target.activate()
     try? await Task.sleep(for: .milliseconds(300))
+    await insertAtCursor(record)
+  }
+
+  /// Inserts into whatever is frontmost right now.
+  private func insertAtCursor(_ record: DictationRecord) async {
     inserter.captureTarget()
     let result = try? await inserter.insert(record.finalText, replacingSelection: false, pressEnter: false)
     inserter.clearTarget()
@@ -780,6 +788,33 @@ final class AppCoordinator {
   /// Style hotkey pressed: polish the current selection in place.
   func polishSelection(action: HotkeyAction) {
     guard let slot = action.styleSlot else { return }
+    guard let style = styles.first(where: { $0.hotkeySlot == slot }) else {
+      indicator.display = .error("No style bound to that key")
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(2))
+      return
+    }
+    polishSelection(style: style)
+  }
+
+  /// From the window: return to the app the user came from, then polish
+  /// its selection.
+  func polishExternalSelection(style: Style) {
+    guard let target = lastExternalApp, !target.isTerminated else {
+      indicator.display = .error("Switch to the app with the selection first")
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(2))
+      return
+    }
+    NSApp.hide(nil)
+    target.activate()
+    Task {
+      try? await Task.sleep(for: .milliseconds(300))
+      polishSelection(style: style)
+    }
+  }
+
+  func polishSelection(style: Style) {
     if polishInFlight {
       // A second press while one is running cancels it rather than queueing.
       if let activePolish { Task { await activePolish.cancel() } }
@@ -795,12 +830,6 @@ final class AppCoordinator {
     polishInFlight = true
     Task {
       defer { polishInFlight = false }
-      guard let style = try? await store?.style(forSlot: slot) else {
-        indicator.display = .error("No style bound to that key")
-        indicatorPanel?.show()
-        scheduleIndicatorHide(after: .seconds(2))
-        return
-      }
       indicator.display = .polishing(style: style.name)
       indicatorPanel?.show()
 
@@ -864,9 +893,64 @@ final class AppCoordinator {
       onToggle: { [weak self] in self?.session?.handle(.togglePressed) },
       onCancel: { [weak self] in self?.session?.handle(.cancel) },
       onChordAbort: { [weak self] in self?.session?.handle(.cancel) },
-      onStyle: { [weak self] action in self?.polishSelection(action: action) })
+      onStyle: { [weak self] action in
+        switch action {
+        case .undoLast: self?.undoLastDictation()
+        case .reinsertLast: self?.reinsertLast()
+        default: self?.polishSelection(action: action)
+        }
+      })
     monitor.install()
     hotkeyMonitor = monitor
+    indicator.onStopRequested = { [weak self] in self?.session?.handle(.togglePressed) }
+  }
+
+  // MARK: - Undo / re-insert
+
+  /// ⌘Z in the app that got the last dictation. Only offered for a short
+  /// window after an insertion so a stale press can't undo unrelated work.
+  private static let undoWindow: TimeInterval = 90
+  private var lastInsertionAt: Date?
+
+  func undoLastDictation() {
+    guard let lastInsertionAt, Date().timeIntervalSince(lastInsertionAt) < Self.undoWindow else {
+      indicator.display = .error("Nothing recent to undo")
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(1.5))
+      return
+    }
+    self.lastInsertionAt = nil
+    Task {
+      try? await inserter.undo()
+      indicator.display = .success(words: 0, note: "Undone")
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(1.2))
+    }
+  }
+
+  /// Puts the most recent dictation at the current cursor (the frontmost
+  /// app — the menu bar does not steal focus).
+  func reinsertLast() {
+    guard let record = recentDictations.first else {
+      indicator.display = .error("No dictation to re-insert")
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(1.5))
+      return
+    }
+    Task { await insertAtCursor(record) }
+  }
+
+  var launchAtLogin: Bool { LaunchAtLogin.isEnabled }
+
+  func setLaunchAtLogin(_ enabled: Bool) {
+    do {
+      try LaunchAtLogin.setEnabled(enabled)
+    } catch {
+      Self.log.error("launch at login failed: \(error)")
+      indicator.display = .error("Couldn't change launch at login")
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(2.5))
+    }
   }
 
   private func makeSession(controller: DictationController, scratch: URL) -> DictationSession {

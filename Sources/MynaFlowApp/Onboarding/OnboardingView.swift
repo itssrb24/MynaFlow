@@ -164,6 +164,14 @@ struct OnboardingView: View {
               Text("That's it. Myna Flow lives in your menu bar.")
                 .font(Theme.Fonts.bodyStrong).foregroundStyle(Theme.Colors.textPrimary)
             }
+            Toggle(isOn: Binding(
+              get: { coordinator.launchAtLogin },
+              set: { coordinator.setLaunchAtLogin($0) })
+            ) {
+              Text("Launch at login").font(Theme.Fonts.body).foregroundStyle(Theme.Colors.textSecondary)
+            }
+            .toggleStyle(.switch)
+            .tint(Theme.Colors.accent)
           } else {
             Text("Waiting for your first dictation…")
               .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)

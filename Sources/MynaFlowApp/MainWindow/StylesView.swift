@@ -124,6 +124,12 @@ struct StylesView: View {
           Text(saveError).font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.danger)
         }
         HStack {
+          Button("Apply to selection") {
+            if let draft { coordinator.polishExternalSelection(style: draft) }
+          }
+          .buttonStyle(NeuButtonStyle())
+          .disabled(!coordinator.polishAvailable)
+          .help("Returns to the app you came from and polishes its selection")
           Button("Save") {
             guard let draft else { return }
             Task {

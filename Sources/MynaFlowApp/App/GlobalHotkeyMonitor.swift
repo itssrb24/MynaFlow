@@ -103,10 +103,10 @@ final class GlobalHotkeyMonitor {
       onCancel()
       return
     }
-    // Style hotkeys are live whenever the app is running: select text
-    // anywhere, press the chord.
+    // Single-press actions (styles, undo, re-insert) are live whenever the
+    // app is running.
     if event.type == .keyDown, !event.isARepeat {
-      for action in HotkeyAction.styleActions
+      for action in HotkeyAction.styleActions + [.undoLast, .reinsertLast]
       where configuration[action]?.matches(keyCode: event.keyCode, modifiers: flags) == true {
         onStyle(action)
         return

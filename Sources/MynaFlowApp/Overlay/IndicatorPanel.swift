@@ -26,6 +26,8 @@ final class IndicatorModel {
   var display: IndicatorDisplay = .hidden
   var audioLevel: Float = 0
   var elapsedSeconds: Int = 0
+  /// Clicking the pill during a toggle session stops it.
+  var onStopRequested: () -> Void = {}
 }
 
 /// An NSPanel that goes exactly where it is put. AppKit constrains ordinary
@@ -128,6 +130,10 @@ struct IndicatorView: View {
       .padding(30)
       .animation(.easeOut(duration: 0.15), value: model.display)
       .opacity(model.display == .hidden ? 0 : 1)
+      .contentShape(Rectangle())
+      .onTapGesture {
+        if case .recording(.toggle) = model.display { model.onStopRequested() }
+      }
   }
 
   /// Toggle mode gets a persistent accent border so the two recording modes

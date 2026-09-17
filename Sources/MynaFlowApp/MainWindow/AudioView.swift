@@ -4,7 +4,24 @@ struct AudioView: View {
   let coordinator: AppCoordinator
 
   var body: some View {
-    Page(title: "Audio", subtitle: "Which microphone dictation listens to.") {
+    Page(title: "Audio & General", subtitle: "Microphone, cleanup, and startup.") {
+      VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+        SectionLabel(text: "Startup")
+        Toggle(isOn: Binding(
+          get: { coordinator.launchAtLogin },
+          set: { coordinator.setLaunchAtLogin($0) })
+        ) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Launch at login").font(Theme.Fonts.bodyStrong).foregroundStyle(Theme.Colors.textPrimary)
+            Text("Myna Flow is a menu bar app; it only helps when it's running.")
+              .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
+          }
+        }
+        .toggleStyle(.switch)
+        .tint(Theme.Colors.accent)
+      }
+      .raised()
+
       VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
         SectionLabel(text: "Input device")
         deviceRow(uid: nil, name: "System default", detail: "Follows macOS when you change inputs.")
