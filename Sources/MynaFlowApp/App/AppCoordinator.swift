@@ -38,6 +38,7 @@ final class AppCoordinator {
   private(set) var polishDownloadFraction: Double?
   private(set) var polishAvailable = false
   private var polishInFlight = false
+  private var activePolish: PolishEngine?
   // Main window state
   private(set) var styles: [Style] = []
   private(set) var hotkeyConfiguration: HotkeyConfiguration = .default
@@ -486,8 +487,15 @@ final class AppCoordinator {
         modelIdentifier: descriptor.id,
         idleTimeout: 300,
         diagnosticsDirectory: paths.diagnostics))
-    languageProvider = LanguageModelProvider(
+    let provider = LanguageModelProvider(
       host: host, cliExecutableURL: cliURL, modelURL: modelURL)
+    await provider.setFallbackObserver { [weak self] in
+      Task { @MainActor in
+        guard let self, self.polishInFlight else { return }
+        self.indicator.display = .polishing(style: "retrying via fallback…")
+      }
+    }
+    languageProvider = provider
     polishAvailable = polishModelInstalled
   }
 
@@ -772,7 +780,11 @@ final class AppCoordinator {
   /// Style hotkey pressed: polish the current selection in place.
   func polishSelection(action: HotkeyAction) {
     guard let slot = action.styleSlot else { return }
-    guard !polishInFlight else { return }
+    if polishInFlight {
+      // A second press while one is running cancels it rather than queueing.
+      if let activePolish { Task { await activePolish.cancel() } }
+      return
+    }
     Task { await refreshInstalledFlags() }
     guard let languageProvider, polishModelInstalled else {
       indicator.display = .error("Polish needs the language model — install it from the menu bar")
@@ -800,11 +812,16 @@ final class AppCoordinator {
           await MainActor.run { inserter.captureTarget() }
           return try await inserter.insert(text, replacingSelection: true, pressEnter: false)
         })
+      activePolish = engine
+      defer { activePolish = nil }
       let outcome = await engine.polish(style: style)
       switch outcome {
       case .replaced:
         indicator.display = .success(words: 0, note: nil)
         scheduleIndicatorHide(after: .seconds(1.2))
+      case .cancelled:
+        indicator.display = .hidden
+        indicatorPanel?.hide()
       case .noSelection:
         indicator.display = .error("Select some text first")
         scheduleIndicatorHide(after: .seconds(2))
@@ -879,6 +896,8 @@ final class AppCoordinator {
 
   func cancelDictation() {
     session?.handle(.cancel)
+    // Esc with nothing recording cancels a polish that is still thinking.
+    if let activePolish { Task { await activePolish.cancel() } }
   }
 
   /// Swaps the dictation controller (engine or rules changed). The session

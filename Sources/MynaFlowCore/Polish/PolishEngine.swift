@@ -22,6 +22,8 @@ public enum PolishPrompt {
 public enum PolishOutcome: Equatable, Sendable {
   case replaced
   case noSelection
+  /// The user cancelled while the model was working; nothing was touched.
+  case cancelled
   /// The model failed or the replacement could not land. The selection was
   /// left untouched — never replaced with a partial or failed result.
   case failed(String)
@@ -34,30 +36,63 @@ public actor PolishEngine {
   private let model: any LocalLanguageModel
   private let readSelection: @Sendable () async -> String?
   private let replaceSelection: @Sendable (String) async throws -> TextInsertionResult
+  /// Interactive cap: a stalled server must read as a failure in seconds,
+  /// not a five-minute hang.
+  private let timeout: Duration
+  private var generation: Task<String, Error>?
+  private var cancelled = false
 
   public init(
     model: any LocalLanguageModel,
     readSelection: @escaping @Sendable () async -> String?,
-    replaceSelection: @escaping @Sendable (String) async throws -> TextInsertionResult
+    replaceSelection: @escaping @Sendable (String) async throws -> TextInsertionResult,
+    timeout: Duration = .seconds(60)
   ) {
     self.model = model
     self.readSelection = readSelection
     self.replaceSelection = replaceSelection
+    self.timeout = timeout
+  }
+
+  /// Abandons the in-flight rewrite. The selection is never touched.
+  public func cancel() {
+    cancelled = true
+    generation?.cancel()
   }
 
   public func polish(style: Style) async -> PolishOutcome {
     guard let selection = await readSelection(),
       !selection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { return .noSelection }
+    if cancelled { return .cancelled }
 
+    let instruction = PolishPrompt.compose(style: style, text: selection)
+    let model = self.model
+    let timeout = self.timeout
+    let task = Task<String, Error> {
+      try await withThrowingTaskGroup(of: String.self) { group in
+        group.addTask { try await model.generateInstruction(instruction, maxTokens: 1_024) }
+        group.addTask {
+          try await Task.sleep(for: timeout)
+          throw PolishTimeout()
+        }
+        let first = try await group.next() ?? ""
+        group.cancelAll()
+        return first
+      }
+    }
+    generation = task
     let rewritten: String
     do {
-      let instruction = PolishPrompt.compose(style: style, text: selection)
-      rewritten = try await model.generateInstruction(instruction, maxTokens: 1_024)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+      rewritten = try await task.value.trimmingCharacters(in: .whitespacesAndNewlines)
+    } catch is PolishTimeout {
+      return .failed("The model timed out after \(Int(timeout / .seconds(1))) s")
+    } catch is CancellationError {
+      return .cancelled
     } catch {
-      return .failed(error.localizedDescription)
+      return cancelled ? .cancelled : .failed(error.localizedDescription)
     }
+    if cancelled { return .cancelled }
     guard !rewritten.isEmpty else { return .failed("The model returned no text") }
 
     do {
@@ -75,3 +110,5 @@ public actor PolishEngine {
     }
   }
 }
+
+private struct PolishTimeout: Error {}

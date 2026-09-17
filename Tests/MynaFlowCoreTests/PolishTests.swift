@@ -97,6 +97,53 @@ struct PolishEngineTests {
     #expect(outcome == .noSelection)
   }
 
+  private struct HangingModel: LocalLanguageModel {
+    func generateInstruction(_ instruction: String, maxTokens: Int) async throws -> String {
+      try await Task.sleep(for: .seconds(30))
+      return "never"
+    }
+  }
+
+  @Test("Cancel while the model is thinking leaves the selection untouched")
+  func cancelMidPolish() async throws {
+    let replacements = Replacements()
+    let engine = PolishEngine(
+      model: HangingModel(),
+      readSelection: { "raw text" },
+      replaceSelection: { text in
+        replacements.append(text)
+        return .replacedSelection
+      })
+    async let outcome = engine.polish(style: Style(name: "Formal", prompt: "p"))
+    try await Task.sleep(for: .milliseconds(50))
+    await engine.cancel()
+    let result = await outcome
+    #expect(result == .cancelled)
+    #expect(replacements.texts.isEmpty)
+  }
+
+  @Test("A model that never answers is cut off at the interactive timeout")
+  func timeout() async throws {
+    let replacements = Replacements()
+    let engine = PolishEngine(
+      model: HangingModel(),
+      readSelection: { "raw text" },
+      replaceSelection: { text in
+        replacements.append(text)
+        return .replacedSelection
+      },
+      timeout: .milliseconds(100))
+    let started = ContinuousClock.now
+    let outcome = await engine.polish(style: Style(name: "Formal", prompt: "p"))
+    #expect(ContinuousClock.now - started < .seconds(5))
+    guard case .failed(let message) = outcome else {
+      Issue.record("expected failure, got \(outcome)")
+      return
+    }
+    #expect(message.lowercased().contains("timed out"))
+    #expect(replacements.texts.isEmpty)
+  }
+
   @Test("Whitespace-only selection counts as no selection")
   func whitespaceSelection() async throws {
     let engine = PolishEngine(
@@ -144,6 +191,25 @@ struct FlowStoreStyleTests {
     try await store.deleteStyle(id: style.id)
     #expect(try await store.styles().first { $0.id == style.id } == nil)
     await store.close()
+  }
+
+  @Test("Built-in styles cannot be deleted and are seeded only into an empty table")
+  func builtinGuard() async throws {
+    let store = try await FlowStore.open(at: temporaryDatabaseURL())
+    let casual = try #require(try await store.styles().first { $0.name == "Casual" })
+    await #expect(throws: FlowStoreError.self) { try await store.deleteStyle(id: casual.id) }
+    #expect(try await store.styles().contains { $0.id == casual.id })
+
+    // A user who deleted every custom style and re-slotted a built-in must
+    // not get the seed re-run on top of their arrangement.
+    var moved = casual
+    moved.hotkeySlot = 5
+    try await store.saveStyle(moved)
+    await store.close()
+    let reopened = try await FlowStore.open(at: store.databaseURL)
+    let slots = try await reopened.styles().filter { $0.name == "Casual" }.map(\.hotkeySlot)
+    #expect(slots == [5])
+    await reopened.close()
   }
 
   @Test("Style lookup by hotkey slot")

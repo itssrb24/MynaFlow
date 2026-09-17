@@ -160,6 +160,13 @@ public actor LanguageModelProvider: LocalLanguageModel {
   private let cliExecutableURL: URL
   private var modelURL: URL
   private var warmEnabled: Bool
+  private var onFallback: @Sendable () -> Void = {}
+
+  /// Observer fired when the warm server fails and the request is retried
+  /// through the cold CLI, so the UI can say why this one is slower.
+  public func setFallbackObserver(_ observer: @escaping @Sendable () -> Void) {
+    onFallback = observer
+  }
 
   public init(
     host: LlamaServerHost,
@@ -211,6 +218,7 @@ public actor LanguageModelProvider: LocalLanguageModel {
       } catch {
         guard Self.shouldFallBackToCLI(after: error) else { throw error }
         MynaLog.warn(.provider, "warm instruction failed (\(type(of: error))), CLI fallback")
+        onFallback()
       }
     }
     let cli = LlamaCLILanguageModel(executableURL: cliExecutableURL, modelURL: modelURL)

@@ -15,6 +15,8 @@ public actor FlowStore {
   private var handle: OpaquePointer?
   private let url: URL
 
+  public var databaseURL: URL { url }
+
   private init(url: URL) {
     self.url = url
   }
@@ -511,6 +513,11 @@ public actor FlowStore {
   }
 
   public func deleteStyle(id: UUID) throws {
+    let builtin = try query(
+      "SELECT COUNT(*) FROM styles WHERE id = ?1 AND builtin = 1",
+      bind: { sqlite3_bind_text($0, 1, id.uuidString, -1, sqliteTransient) },
+      row: { Int(sqlite3_column_int64($0, 0)) }).first ?? 0
+    guard builtin == 0 else { throw FlowStoreError(message: "built-in styles cannot be deleted") }
     try run(
       "DELETE FROM styles WHERE id = ?1",
       bind: { sqlite3_bind_text($0, 1, id.uuidString, -1, sqliteTransient) })
@@ -650,8 +657,10 @@ public actor FlowStore {
     try seedBuiltinStylesIfNeeded()
   }
 
+  /// Seeds only into an empty table — never re-runs on top of a user's own
+  /// arrangement, which would collide hotkey slots.
   private func seedBuiltinStylesIfNeeded() throws {
-    let count = try scalarInt("SELECT COUNT(*) FROM styles WHERE builtin = 1")
+    let count = try scalarInt("SELECT COUNT(*) FROM styles")
     guard count == 0 else { return }
     let now = Date().timeIntervalSince1970
     let builtins: [(name: String, prompt: String, slot: Int)] = [
