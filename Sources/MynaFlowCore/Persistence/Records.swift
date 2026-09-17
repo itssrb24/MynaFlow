@@ -22,6 +22,8 @@ public struct DictationRecord: Identifiable, Codable, Equatable, Sendable {
   public let targetApp: String?
   public let insertionMethod: InsertionMethod
   public let processingMs: Int
+  /// Why insertion fell back (AX role, app, reason); nil when it landed.
+  public let insertionDiagnostics: String?
 
   public init(
     id: UUID = UUID(),
@@ -36,7 +38,8 @@ public struct DictationRecord: Identifiable, Codable, Equatable, Sendable {
     wordCount: Int,
     targetApp: String? = nil,
     insertionMethod: InsertionMethod,
-    processingMs: Int
+    processingMs: Int,
+    insertionDiagnostics: String? = nil
   ) {
     self.id = id
     self.timestamp = timestamp
@@ -51,6 +54,7 @@ public struct DictationRecord: Identifiable, Codable, Equatable, Sendable {
     self.targetApp = targetApp
     self.insertionMethod = insertionMethod
     self.processingMs = processingMs
+    self.insertionDiagnostics = insertionDiagnostics
   }
 }
 

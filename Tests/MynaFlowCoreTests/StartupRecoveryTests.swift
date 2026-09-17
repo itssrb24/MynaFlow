@@ -35,7 +35,7 @@ struct StartupRecoveryTests {
     #expect(FileManager.default.fileExists(atPath: aside.path))
     #expect(!FileManager.default.fileExists(atPath: database.path))
     let store = try await FlowStore.open(at: database)
-    #expect(await store.schemaVersion() == 3)
+    #expect(await store.schemaVersion() == 4)
     await store.close()
   }
 }

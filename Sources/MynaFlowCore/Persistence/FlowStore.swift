@@ -46,8 +46,8 @@ public actor FlowStore {
       INSERT INTO dictations (
         id, timestamp, raw_transcript, cleaned_text, final_text, style_applied,
         engine_used, fallback_occurred, duration_seconds, word_count,
-        target_app, insertion_method, processing_ms
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        target_app, insertion_method, processing_ms, insertion_diagnostics
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
       """,
       bind: { statement in
         sqlite3_bind_text(statement, 1, record.id.uuidString, -1, sqliteTransient)
@@ -63,15 +63,14 @@ public actor FlowStore {
         bindOptionalText(statement, 11, record.targetApp)
         sqlite3_bind_text(statement, 12, record.insertionMethod.rawValue, -1, sqliteTransient)
         sqlite3_bind_int(statement, 13, Int32(record.processingMs))
+        bindOptionalText(statement, 14, record.insertionDiagnostics)
       })
   }
 
   public func recentDictations(limit: Int) throws -> [DictationRecord] {
     try query(
       """
-      SELECT id, timestamp, raw_transcript, cleaned_text, final_text, style_applied,
-             engine_used, fallback_occurred, duration_seconds, word_count,
-             target_app, insertion_method, processing_ms
+      SELECT \(Self.dictationColumns)
       FROM dictations ORDER BY timestamp DESC LIMIT ?1
       """,
       bind: { sqlite3_bind_int($0, 1, Int32(limit)) },
@@ -81,7 +80,7 @@ public actor FlowStore {
   private static let dictationColumns = """
     id, timestamp, raw_transcript, cleaned_text, final_text, style_applied,
     engine_used, fallback_occurred, duration_seconds, word_count,
-    target_app, insertion_method, processing_ms
+    target_app, insertion_method, processing_ms, insertion_diagnostics
     """
 
   /// Filtered, reverse-chronological history. Text search is a LIKE over
@@ -636,6 +635,10 @@ public actor FlowStore {
       )
       """
     ],
+    // v4: why an insertion fell back, for the History tooltip.
+    [
+      "ALTER TABLE dictations ADD COLUMN insertion_diagnostics TEXT"
+    ],
   ]
 
   private func migrate() throws {
@@ -777,7 +780,8 @@ public actor FlowStore {
       wordCount: Int(sqlite3_column_int(statement, 9)),
       targetApp: columnText(statement, 10),
       insertionMethod: method,
-      processingMs: Int(sqlite3_column_int(statement, 12)))
+      processingMs: Int(sqlite3_column_int(statement, 12)),
+      insertionDiagnostics: columnText(statement, 13))
   }
 }
 

@@ -16,17 +16,21 @@ public struct DictationDependencies: Sendable {
   public var clearTarget: @Sendable () async -> Void
   public var insert: @Sendable (String) async throws -> TextInsertionResult
   public var copyToClipboard: @Sendable (String) async -> Bool
+  /// The inserter's explanation of the last attempt; recorded on fallbacks.
+  public var insertionDiagnostics: @Sendable () async -> String?
 
   public init(
     captureTarget: @escaping @Sendable () async -> String?,
     clearTarget: @escaping @Sendable () async -> Void,
     insert: @escaping @Sendable (String) async throws -> TextInsertionResult,
-    copyToClipboard: @escaping @Sendable (String) async -> Bool
+    copyToClipboard: @escaping @Sendable (String) async -> Bool,
+    insertionDiagnostics: @escaping @Sendable () async -> String? = { nil }
   ) {
     self.captureTarget = captureTarget
     self.clearTarget = clearTarget
     self.insert = insert
     self.copyToClipboard = copyToClipboard
+    self.insertionDiagnostics = insertionDiagnostics
   }
 }
 
@@ -252,7 +256,8 @@ public actor DictationController {
       wordCount: text.split(whereSeparator: \.isWhitespace).count,
       targetApp: session?.targetApplication,
       insertionMethod: insertionMethod,
-      processingMs: processingMs)
+      processingMs: processingMs,
+      insertionDiagnostics: insertionMethod == .ax ? nil : await dependencies.insertionDiagnostics())
     do {
       try await store.insert(record)
     } catch {

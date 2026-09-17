@@ -219,7 +219,8 @@ final class AppCoordinator {
             NSPasteboard.general.clearContents()
             return NSPasteboard.general.setString(text, forType: .string)
           }
-        }))
+        },
+        insertionDiagnostics: { await MainActor.run { inserter.lastInsertionDiagnostics } }))
     Task {
       await controller.setHintsProvider {
         let terms = (try? await store.vocabularyTerms().map(\.term)) ?? []
@@ -793,6 +794,25 @@ final class AppCoordinator {
       await persist("save microphone choice") {
         try await store?.setSetting(uid ?? "", forKey: "input_device_uid")
       }
+    }
+  }
+
+  /// Export goes through a save panel — the user names the destination —
+  /// and the file is created owner-only, like the database it came from.
+  func exportHistory(_ query: HistoryQuery, as format: HistoryExporter.Format) async {
+    guard let store else { return }
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "Myna Flow history.\(format.fileExtension)"
+    panel.canCreateDirectories = true
+    panel.title = "Export history as \(format.displayName)"
+    NSApp.activate(ignoringOtherApps: true)
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    await persist("export history") {
+      let records = try await store.searchDictations(query, limit: 100_000)
+      let data = try HistoryExporter.export(records, as: format)
+      guard FileManager.default.createFile(
+        atPath: url.path, contents: data, attributes: [.posixPermissions: 0o600])
+      else { throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path]) }
     }
   }
 

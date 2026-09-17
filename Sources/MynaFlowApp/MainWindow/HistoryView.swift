@@ -6,6 +6,9 @@ struct HistoryView: View {
   @State private var searchText = ""
   @State private var appFilter: String?
   @State private var engineFilter: String?
+  @State private var dateRange: DateRange = .all
+  @State private var customSince = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+  @State private var customUntil = Date()
   @State private var records: [DictationRecord] = []
   @State private var apps: [String] = []
   @State private var confirmRange: DeletionRange?
@@ -43,6 +46,9 @@ struct HistoryView: View {
     }
     .onChange(of: appFilter) { Task { await reload() } }
     .onChange(of: engineFilter) { Task { await reload() } }
+    .onChange(of: dateRange) { Task { await reload() } }
+    .onChange(of: customSince) { Task { await reload() } }
+    .onChange(of: customUntil) { Task { await reload() } }
     .confirmationDialog(
       "Delete dictations from \(confirmRange?.displayName.lowercased() ?? "")?",
       isPresented: Binding(get: { confirmRange != nil }, set: { if !$0 { confirmRange = nil } }),
@@ -85,7 +91,28 @@ struct HistoryView: View {
         Text("Parakeet").tag(String?.some("parakeet"))
       }
       .labelsHidden()
+      Picker("When", selection: $dateRange) {
+        ForEach(DateRange.allCases, id: \.self) { Text($0.displayName).tag($0) }
+      }
+      .labelsHidden()
+      if dateRange == .custom {
+        DatePicker("From", selection: $customSince, displayedComponents: .date).labelsHidden()
+        DatePicker("To", selection: $customUntil, displayedComponents: .date).labelsHidden()
+      }
       Spacer()
+      Menu {
+        ForEach(HistoryExporter.Format.allCases, id: \.self) { format in
+          Button("Export shown as \(format.displayName)…") {
+            Task { await coordinator.exportHistory(query, as: format) }
+          }
+        }
+      } label: {
+        Label("Export…", systemImage: "square.and.arrow.up")
+      }
+      .menuStyle(.borderlessButton)
+      .foregroundStyle(Theme.Colors.textSecondary)
+      .fixedSize()
+      .disabled(records.isEmpty)
       Menu {
         ForEach(DeletionRange.allCases, id: \.self) { range in
           Button(range.displayName, role: range == .allTime ? .destructive : nil) {
@@ -101,10 +128,43 @@ struct HistoryView: View {
     }
   }
 
+  private var query: HistoryQuery {
+    let (since, until) = dateRange.bounds(customSince: customSince, customUntil: customUntil)
+    return HistoryQuery(
+      text: searchText, targetApp: appFilter, engine: engineFilter, since: since, until: until)
+  }
+
   private func reload() async {
-    records = await coordinator.searchHistory(
-      HistoryQuery(text: searchText, targetApp: appFilter, engine: engineFilter), limit: 300)
+    records = await coordinator.searchHistory(query, limit: 300)
     apps = await coordinator.historyApps()
+  }
+}
+
+enum DateRange: CaseIterable {
+  case all, today, week, month, custom
+
+  var displayName: String {
+    switch self {
+    case .all: "Any time"
+    case .today: "Today"
+    case .week: "Last 7 days"
+    case .month: "Last 30 days"
+    case .custom: "Custom range…"
+    }
+  }
+
+  func bounds(customSince: Date, customUntil: Date, now: Date = Date()) -> (Date?, Date?) {
+    let calendar = Calendar.current
+    switch self {
+    case .all: return (nil, nil)
+    case .today: return (calendar.startOfDay(for: now), nil)
+    case .week: return (calendar.date(byAdding: .day, value: -7, to: now), nil)
+    case .month: return (calendar.date(byAdding: .day, value: -30, to: now), nil)
+    case .custom:
+      let start = calendar.startOfDay(for: customSince)
+      let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: customUntil))
+      return (start, end)
+    }
   }
 }
 
@@ -114,6 +174,14 @@ private struct HistoryRow: View {
   let styles: [Style]
   let changed: () async -> Void
   @State private var busy = false
+
+  private var fallbackExplanation: String {
+    let base = record.insertionMethod == .clipboard
+      ? "Pasted via the clipboard instead of Accessibility"
+      : "Saved to history and clipboard — not inserted"
+    guard let why = record.insertionDiagnostics else { return base }
+    return "\(base)\n\(why)"
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
@@ -132,11 +200,11 @@ private struct HistoryRow: View {
             .font(Theme.Fonts.caption)
             .foregroundStyle(Theme.Colors.accent)
         }
-        if record.insertionMethod == .historyOnly {
-          Image(systemName: "doc.on.clipboard")
+        if record.insertionMethod != .ax {
+          Image(systemName: record.insertionMethod == .clipboard ? "doc.on.clipboard" : "tray.and.arrow.down")
             .font(.system(size: 10))
             .foregroundStyle(Theme.Colors.warning)
-            .help("Saved to history and clipboard — no text field was focused")
+            .help(fallbackExplanation)
         }
         Spacer()
         Text("\(record.wordCount)w · \(record.processingMs)ms")

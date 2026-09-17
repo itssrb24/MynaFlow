@@ -33,12 +33,30 @@ struct FlowStoreTests {
     )
   }
 
+  @Test("Insertion diagnostics round-trip and stay nil for clean insertions")
+  func insertionDiagnosticsRoundTrip() async throws {
+    let store = try await FlowStore.open(at: temporaryDatabaseURL())
+    let fallback = DictationRecord(
+      rawTranscript: "a", cleanedText: "a", finalText: "a", engineUsed: "apple",
+      durationSeconds: 1, wordCount: 1, insertionMethod: .historyOnly, processingMs: 1,
+      insertionDiagnostics: "no focused element in com.apple.finder")
+    let clean = DictationRecord(
+      rawTranscript: "b", cleanedText: "b", finalText: "b", engineUsed: "apple",
+      durationSeconds: 1, wordCount: 1, insertionMethod: .ax, processingMs: 1)
+    try await store.insert(fallback)
+    try await store.insert(clean)
+    let rows = try await store.recentDictations(limit: 10)
+    #expect(rows.first(where: { $0.id == fallback.id })?.insertionDiagnostics == "no focused element in com.apple.finder")
+    #expect(rows.first(where: { $0.id == clean.id })?.insertionDiagnostics == nil)
+    await store.close()
+  }
+
   @Test("Opening a fresh store migrates to the latest schema and sets 0600 permissions")
   func freshStoreMigratesAndProtectsFile() async throws {
     let url = temporaryDatabaseURL()
     let store = try await FlowStore.open(at: url)
     let version = await store.schemaVersion()
-    #expect(version == 3)
+    #expect(version == 4)
 
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     let permissions = try #require(attributes[.posixPermissions] as? NSNumber)
