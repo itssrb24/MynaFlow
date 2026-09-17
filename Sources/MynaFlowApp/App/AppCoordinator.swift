@@ -173,14 +173,24 @@ final class AppCoordinator {
     return appleEngine
   }
 
+  /// Events flow through one stream consumed by one main-actor task, so the
+  /// order the controller emitted them in is the order the UI sees them.
+  private var eventPump: Task<Void, Never>?
+
   private func attachObservers(to controller: DictationController) async {
-    await controller.setStateObserver { [weak self] state in
-      Task { @MainActor in self?.handleState(state) }
-    }
-    await controller.setOutcomeObserver { [weak self] outcome in
-      Task { @MainActor in
-        self?.lastOutcome = outcome
-        self?.watchForCorrection(outcome)
+    eventPump?.cancel()
+    let (stream, continuation) = AsyncStream<DictationControllerEvent>.makeStream()
+    await controller.setEventObserver { event in continuation.yield(event) }
+    eventPump = Task { @MainActor [weak self] in
+      for await event in stream {
+        guard let self else { return }
+        switch event {
+        case .state(let state):
+          self.handleState(state)
+        case .outcome(let outcome):
+          self.lastOutcome = outcome
+          self.watchForCorrection(outcome)
+        }
       }
     }
   }

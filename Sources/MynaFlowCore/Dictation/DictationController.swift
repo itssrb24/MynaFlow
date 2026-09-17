@@ -42,6 +42,15 @@ public struct DictationOutcome: Equatable, Sendable {
   public let failureMessage: String?
 }
 
+/// One ordered channel for everything the UI needs to know. Delivering the
+/// outcome and the terminal state as separate callbacks let two independent
+/// main-actor hops race, so the success pill could read a stale outcome.
+public enum DictationControllerEvent: Equatable, Sendable {
+  case state(DictationState)
+  /// Always delivered before the `.completed`/`.failed` state that ends it.
+  case outcome(DictationOutcome)
+}
+
 /// Orchestrates one dictation from hotkey to history row. The invariant this
 /// actor exists to defend: once a transcript exists, it is never lost — every
 /// failure path lands it in history, and every non-secure failure path also
@@ -55,8 +64,9 @@ public actor DictationController {
   private let dependencies: DictationDependencies
   private var cleanupEnabled = true
   private var hints: @Sendable () async -> [String] = { [] }
-  private var onStateChange: @Sendable (DictationState) -> Void = { _ in }
-  private var onOutcome: @Sendable (DictationOutcome) -> Void = { _ in }
+  private var onEvent: @Sendable (DictationControllerEvent) -> Void = { _ in }
+  private func onStateChange(_ state: DictationState) { onEvent(.state(state)) }
+  private func onOutcome(_ outcome: DictationOutcome) { onEvent(.outcome(outcome)) }
 
   public var state: DictationState { machine.state }
 
@@ -82,15 +92,12 @@ public actor DictationController {
     hints = provider
   }
 
-  /// Observer for the indicator; called on every state transition.
-  public func setStateObserver(_ observer: @escaping @Sendable (DictationState) -> Void) {
-    onStateChange = observer
-    observer(machine.state)
-  }
-
-  /// Observer for finished dictations; called once per stored record.
-  public func setOutcomeObserver(_ observer: @escaping @Sendable (DictationOutcome) -> Void) {
-    onOutcome = observer
+  /// Single ordered observer for state transitions and outcomes. Called
+  /// synchronously on the actor in the order things happened; the consumer
+  /// must preserve that order (e.g. a single serial task).
+  public func setEventObserver(_ observer: @escaping @Sendable (DictationControllerEvent) -> Void) {
+    onEvent = observer
+    observer(.state(machine.state))
   }
 
   /// Warm the engine so the first hotkey press pays no initialization cost.

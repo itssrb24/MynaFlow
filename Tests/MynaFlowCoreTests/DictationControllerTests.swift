@@ -124,6 +124,21 @@ private final class OutcomeCollector: @unchecked Sendable {
   }
 }
 
+private final class EventCollector: @unchecked Sendable {
+  private let lock = NSLock()
+  private var events: [DictationControllerEvent] = []
+  func append(_ event: DictationControllerEvent) {
+    lock.lock()
+    events.append(event)
+    lock.unlock()
+  }
+  var all: [DictationControllerEvent] {
+    lock.lock()
+    defer { lock.unlock() }
+    return events
+  }
+}
+
 private final class ControllerHolder: @unchecked Sendable {
   var controller: DictationController?
 }
@@ -312,8 +327,8 @@ struct DictationControllerTests {
     let controller = makeController(
       store: store, recorder: recorder, insertOutcome: { _ in .noFocusedField })
     let outcomes = OutcomeCollector()
-    await controller.setOutcomeObserver { outcome in
-      outcomes.append(outcome)
+    await controller.setEventObserver { event in
+      if case .outcome(let outcome) = event { outcomes.append(outcome) }
     }
     _ = await controller.startDictation(mode: .hold)
     await controller.finishRecording(frames: someFrames())
@@ -367,6 +382,26 @@ struct DictationControllerTests {
     #expect(records.isEmpty)
     let state = await controller.state
     #expect(state == .cancelled)
+  }
+
+  @Test("Events arrive in order: outcome strictly before the completed state")
+  func eventOrdering() async throws {
+    let store = FakeStore()
+    let recorder = Recorder()
+    let controller = makeController(
+      store: store, recorder: recorder, insertOutcome: { _ in .noFocusedField })
+    let events = EventCollector()
+    await controller.setEventObserver { event in events.append(event) }
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    let all = events.all
+    let outcomeIndex = try #require(all.firstIndex { if case .outcome = $0 { return true }; return false })
+    let completedIndex = try #require(
+      all.firstIndex { if case .state(.completed) = $0 { return true }; return false })
+    #expect(outcomeIndex < completedIndex)
+    if case .outcome(let outcome) = all[outcomeIndex] {
+      #expect(outcome.insertionMethod == .historyOnly)
+    }
   }
 
   @Test("Empty audio fails cleanly without a history row")
