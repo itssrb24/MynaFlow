@@ -17,7 +17,8 @@ struct ModelsView: View {
       VStack(alignment: .leading, spacing: Theme.Spacing.md) {
         SectionLabel(text: "Speech engines")
         engineRow(
-          name: "Apple Speech", detail: "Built into macOS. Fast, no download. Always the fallback.",
+          name: "Apple Speech",
+          detail: "Built into macOS. Always the fallback. \(coordinator.speechStatusLine.replacingOccurrences(of: "Apple Speech: ", with: ""))",
           trailing: {
             Text(coordinator.engineChoice == .apple ? "In use" : "Fallback")
               .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textSecondary)

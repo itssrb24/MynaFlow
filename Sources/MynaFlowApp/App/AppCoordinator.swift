@@ -26,6 +26,25 @@ final class AppCoordinator {
   private var parakeetEngine: ParakeetEngine?
   private var paths: ApplicationPaths?
   private(set) var parakeetInstalled = false
+  private(set) var speechAssetState: SpeechAssetState?
+  private(set) var polishModelLoaded = false
+
+  /// "Apple Speech: Ready · English (US)" — refreshed whenever the menu opens.
+  var speechStatusLine: String {
+    guard let speechAssetState else { return "Apple Speech: checking…" }
+    return "Apple Speech: \(SpeechReadinessCopy.statusLine(speechAssetState))"
+  }
+
+  var modelsStatusLine: String {
+    var parts: [String] = []
+    if parakeetInstalled {
+      parts.append(engineChoice == .parakeet ? "Parakeet in use" : "Parakeet installed")
+    }
+    if polishModelInstalled {
+      parts.append(polishModelLoaded ? "Polish model loaded" : "Polish model idle")
+    }
+    return parts.isEmpty ? "No optional models installed" : parts.joined(separator: " · ")
+  }
   private(set) var boostingInstalled = false
   private(set) var boostingInstalling = false
   private(set) var parakeetDownloadFraction: Double?
@@ -96,6 +115,12 @@ final class AppCoordinator {
       self.store = store
 
       self.paths = paths
+      do {
+        try DiagnosticsLog.shared.configure(directory: paths.diagnostics)
+      } catch {
+        Self.log.error("diagnostics log unavailable: \(error)")
+      }
+      diag("startup: schema v\(await store.schemaVersion()), recovered=\(recoveredDatabaseURL != nil)")
       let apple = AppleSpeechEngine()
       await apple.resolveLocale()
       appleEngine = apple
@@ -168,7 +193,38 @@ final class AppCoordinator {
 
   /// App quit: stop the model server (otherwise it outlives us holding
   /// gigabytes) and close the database cleanly.
+  /// Event-log line: unified logging for `log stream`, plus the exportable file.
+  func diag(_ message: String) {
+    Self.log.info("\(message, privacy: .public)")
+    DiagnosticsLog.shared.write("info", "app", message)
+  }
+
+  func exportDiagnostics() {
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "Myna Flow diagnostics.log"
+    panel.canCreateDirectories = true
+    panel.title = "Export diagnostics log"
+    NSApp.activate(ignoringOtherApps: true)
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    let data = DiagnosticsLog.shared.exportData()
+    if !FileManager.default.createFile(
+      atPath: url.path, contents: data, attributes: [.posixPermissions: 0o600])
+    {
+      indicator.display = .error("Couldn't write \(url.lastPathComponent)")
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(3))
+    }
+  }
+
+  func revealDiagnostics() {
+    guard let url = DiagnosticsLog.shared.fileURL else { return }
+    NSWorkspace.shared.activateFileViewerSelecting([url])
+  }
+
+  var diagnosticsAvailable: Bool { DiagnosticsLog.shared.fileURL != nil }
+
   func shutdown() async {
+    diag("shutdown")
     session?.handle(.cancel)
     await languageProvider?.stop()
     await store?.close()
@@ -187,6 +243,10 @@ final class AppCoordinator {
     if let modelManager, let polishModel {
       polishModelInstalled = await modelManager.state(for: polishModel) == .installed
       polishAvailable = polishModelInstalled && languageProvider != nil
+    }
+    polishModelLoaded = await languageProvider?.isModelLoaded ?? false
+    if let appleEngine {
+      speechAssetState = await appleEngine.assetState()
     }
   }
 
@@ -254,6 +314,10 @@ final class AppCoordinator {
           self.handleState(state)
         case .outcome(let outcome):
           self.lastOutcome = outcome
+          self.diag(
+            "dictation \(outcome.engineUsed.rawValue) fallback=\(outcome.fallbackOccurred) "
+              + "insert=\(outcome.insertionMethod.rawValue) words=\(outcome.wordCount)"
+              + (outcome.failureMessage.map { " failure=\($0)" } ?? ""))
           if outcome.insertionMethod == .ax, outcome.failureMessage == nil {
             self.lastInsertionAt = Date()
           }
@@ -321,6 +385,7 @@ final class AppCoordinator {
       try await operation()
     } catch {
       Self.log.error("\(what) failed: \(error)")
+      DiagnosticsLog.shared.write("error", "app", "\(what) failed: \(error)")
       indicator.display = .error("Couldn't \(what): \(error.localizedDescription)")
       indicatorPanel?.show()
       scheduleIndicatorHide(after: .seconds(3))

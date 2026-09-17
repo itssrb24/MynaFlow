@@ -102,6 +102,20 @@ struct AudioView: View {
         }
       }
       .raised()
+
+      VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+        SectionLabel(text: "Diagnostics")
+        Text("An event log (outcomes and errors, never your words) kept on this Mac. Share it when reporting a problem.")
+          .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
+        HStack(spacing: Theme.Spacing.sm) {
+          Button("Export diagnostics…") { coordinator.exportDiagnostics() }
+            .buttonStyle(NeuButtonStyle())
+          Button("Reveal in Finder") { coordinator.revealDiagnostics() }
+            .buttonStyle(NeuButtonStyle())
+        }
+        .disabled(!coordinator.diagnosticsAvailable)
+      }
+      .raised()
     }
     .task { fillerText = coordinator.userFillers.joined(separator: ", ") }
   }

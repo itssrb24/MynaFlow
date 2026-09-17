@@ -89,6 +89,9 @@ struct MenuBarMenu: View {
       }
       Divider()
     }
+    Text(coordinator.speechStatusLine)
+    Text(coordinator.modelsStatusLine)
+    Divider()
     Button(coordinator.menuBarState == .recording
       ? "Stop Dictation"
       : "Start Dictation (or hold \(coordinator.hotkeyConfiguration[.dictationHold]?.keycapLabel ?? "unbound"))") {

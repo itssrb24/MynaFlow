@@ -514,12 +514,15 @@ enum MynaLog {
 
   static func info(_ category: Category, _ message: String) {
     logger.info("\(message, privacy: .public)")
+    DiagnosticsLog.shared.write("info", "llm", message)
   }
   static func warn(_ category: Category, _ message: String) {
     logger.warning("\(message, privacy: .public)")
+    DiagnosticsLog.shared.write("warn", "llm", message)
   }
   static func error(_ category: Category, _ message: String) {
     logger.error("\(message, privacy: .public)")
+    DiagnosticsLog.shared.write("error", "llm", message)
   }
 }
 
