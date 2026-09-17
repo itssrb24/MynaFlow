@@ -1,8 +1,24 @@
 import MynaFlowCore
 import SwiftUI
 
+/// Quit hook: SwiftUI has no scene-level terminate callback, so the
+/// delegate stops the model server and closes the database.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+  var coordinator: AppCoordinator?
+
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    guard let coordinator else { return .terminateNow }
+    Task { @MainActor in
+      await coordinator.shutdown()
+      sender.reply(toApplicationShouldTerminate: true)
+    }
+    return .terminateLater
+  }
+}
+
 @main
 struct MynaFlowApp: App {
+  @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @State private var coordinator = AppCoordinator()
   @State private var booted = false
 
@@ -15,6 +31,7 @@ struct MynaFlowApp: App {
       BootLabel(symbol: menuBarSymbol) {
         guard !booted else { return false }
         booted = true
+        appDelegate.coordinator = coordinator
         await coordinator.start()
         return coordinator.needsOnboarding
       }
@@ -66,6 +83,12 @@ struct MenuBarMenu: View {
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
+    if let recovered = coordinator.recoveredDatabaseURL {
+      Button("History database was reset — reveal the old file (\(recovered.lastPathComponent))") {
+        coordinator.revealRecoveredDatabase()
+      }
+      Divider()
+    }
     Button(coordinator.menuBarState == .recording
       ? "Stop Dictation"
       : "Start Dictation (or hold \(coordinator.hotkeyConfiguration[.dictationHold]?.keycapLabel ?? "unbound"))") {
@@ -129,6 +152,8 @@ struct MenuBarMenu: View {
       NSApplication.shared.terminate(nil)
     }
     .keyboardShortcut("q")
+    Color.clear.frame(width: 0, height: 0)
+      .task { await coordinator.refreshInstalledFlags() }
   }
 
   private func menuTitle(for record: DictationRecord) -> String {

@@ -66,6 +66,8 @@ final class AppCoordinator {
   /// Owns start/stop/cancel/capture; see DictationSessionPolicy for the rules.
   private var session: DictationSession?
   private var controllerState: DictationState = .idle
+  /// Set when startup had to move a corrupt history database aside.
+  private(set) var recoveredDatabaseURL: URL?
 
   private let launchedAt = Date()
 
@@ -73,7 +75,17 @@ final class AppCoordinator {
     indicatorPanel = IndicatorPanelController(model: indicator)
     do {
       let paths = try ApplicationPaths.production()
-      let store = try await FlowStore.open(at: paths.database)
+      let store: FlowStore
+      do {
+        store = try await FlowStore.open(at: paths.database)
+      } catch {
+        // Move the unopenable file aside and start fresh: dictation must
+        // keep working, and nothing is deleted.
+        Self.log.error("history database failed to open: \(error); moving aside")
+        let aside = try StartupRecovery.moveAside(database: paths.database)
+        store = try await FlowStore.open(at: paths.database)
+        recoveredDatabaseURL = aside
+      }
       self.store = store
 
       self.paths = paths
@@ -131,6 +143,35 @@ final class AppCoordinator {
       indicator.display = .error("Startup failed: \(error.localizedDescription)")
       indicatorPanel?.show()
     }
+  }
+
+  /// App quit: stop the model server (otherwise it outlives us holding
+  /// gigabytes) and close the database cleanly.
+  func shutdown() async {
+    session?.handle(.cancel)
+    await languageProvider?.stop()
+    await store?.close()
+  }
+
+  /// Installed-ness is a claim about the filesystem, so re-check it before
+  /// it matters (menu open, dictation, polish) rather than trusting launch.
+  func refreshInstalledFlags() async {
+    if let parakeetEngine {
+      parakeetInstalled = await parakeetEngine.isInstalled
+      boostingInstalled = await parakeetEngine.isBoostingInstalled
+      if engineChoice == .parakeet, !parakeetInstalled {
+        await setEngine(.apple)
+      }
+    }
+    if let modelManager, let polishModel {
+      polishModelInstalled = await modelManager.state(for: polishModel) == .installed
+      polishAvailable = polishModelInstalled && languageProvider != nil
+    }
+  }
+
+  func revealRecoveredDatabase() {
+    guard let recoveredDatabaseURL else { return }
+    NSWorkspace.shared.activateFileViewerSelecting([recoveredDatabaseURL])
   }
 
   // MARK: - Engines
@@ -728,6 +769,7 @@ final class AppCoordinator {
   func polishSelection(action: HotkeyAction) {
     guard let slot = action.styleSlot else { return }
     guard !polishInFlight else { return }
+    Task { await refreshInstalledFlags() }
     guard let languageProvider, polishModelInstalled else {
       indicator.display = .error("Polish needs the language model — install it from the menu bar")
       indicatorPanel?.show()
