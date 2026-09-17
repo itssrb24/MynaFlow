@@ -27,6 +27,9 @@ final class AppCoordinator {
   private var paths: ApplicationPaths?
   private(set) var parakeetInstalled = false
   private(set) var speechAssetState: SpeechAssetState?
+  /// Set when the bundled llama.cpp files fail checksum verification; polish
+  /// stays off until the app is reinstalled.
+  private(set) var runtimeIntegrityFailure: String?
   private(set) var polishModelLoaded = false
 
   /// "Apple Speech: Ready · English (US)" — refreshed whenever the menu opens.
@@ -36,6 +39,9 @@ final class AppCoordinator {
   }
 
   var modelsStatusLine: String {
+    if let runtimeIntegrityFailure {
+      return "Polish disabled — \(runtimeIntegrityFailure) Reinstall Myna Flow."
+    }
     var parts: [String] = []
     if parakeetInstalled {
       parts.append(engineChoice == .parakeet ? "Parakeet in use" : "Parakeet installed")
@@ -281,10 +287,7 @@ final class AppCoordinator {
           try await inserter.insert(text, replacingSelection: false, pressEnter: false)
         },
         copyToClipboard: { text in
-          await MainActor.run {
-            NSPasteboard.general.clearContents()
-            return NSPasteboard.general.setString(text, forType: .string)
-          }
+          await MainActor.run { PasteboardHygiene.write(text) }
         },
         insertionDiagnostics: { await MainActor.run { inserter.lastInsertionDiagnostics } }))
     Task {
@@ -581,6 +584,17 @@ final class AppCoordinator {
       let cliURL = Self.runtimeExecutable(named: "llama-cli", paths: paths)
     else {
       Self.log.warning("llama runtimes not found; polish disabled")
+      return
+    }
+    do {
+      let checked = try RuntimeIntegrity.verify(
+        directory: serverURL.deletingLastPathComponent(), required: ["llama-server", "llama-cli"])
+      diag("runtime integrity ok (\(checked) files)")
+    } catch {
+      // Never execute a binary that does not match the sealed manifest.
+      runtimeIntegrityFailure = error.localizedDescription
+      DiagnosticsLog.shared.write("error", "app", "runtime integrity failed: \(error)")
+      Self.log.error("runtime integrity failed: \(error)")
       return
     }
     let host = LlamaServerHost(
@@ -1096,6 +1110,10 @@ final class AppCoordinator {
       return
     }
     Task { await refreshInstalledFlags() }
+    guard permissions.hasAccessibilityPermission else {
+      showPermissionProblem(.accessibility)
+      return
+    }
     guard let languageProvider, polishModelInstalled else {
       indicator.display = .error("Polish needs the language model — install it from the menu bar")
       indicatorPanel?.show()
@@ -1248,7 +1266,25 @@ final class AppCoordinator {
       self?.indicatorPanel?.show()
       self?.scheduleIndicatorHide(after: .seconds(2.5))
     }
+    session.onPermissionProblem = { [weak self] problem in self?.showPermissionProblem(problem) }
     return session
+  }
+
+  /// One actionable pill per revoked grant; clicking it opens the right pane.
+  private func showPermissionProblem(_ problem: DictationSession.PermissionProblem) {
+    refreshPermissions()
+    switch problem {
+    case .microphone:
+      diag("microphone permission revoked")
+      indicator.onErrorAction = { [weak self] in self?.permissions.openMicrophoneSettings() }
+      indicator.display = .error("Microphone access is off — click to open System Settings")
+    case .accessibility:
+      diag("accessibility permission revoked")
+      indicator.onErrorAction = { [weak self] in self?.permissions.openAccessibilitySettings() }
+      indicator.display = .error("Accessibility is off: text goes to the scratchpad — click to fix")
+    }
+    indicatorPanel?.show()
+    scheduleIndicatorHide(after: .seconds(6))
   }
 
   /// Menu bar "Start Dictation": toggle semantics, so it can always be stopped.
@@ -1334,8 +1370,9 @@ final class AppCoordinator {
     recentDictations = (try? await store.recentDictations(limit: 5)) ?? []
   }
 
+  /// Every clipboard write goes through the hygiene helper: the text is
+  /// restored/cleared after 30 s if nothing else has touched the pasteboard.
   func copyToClipboard(_ text: String) {
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(text, forType: .string)
+    PasteboardHygiene.write(text)
   }
 }

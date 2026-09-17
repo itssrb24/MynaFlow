@@ -611,6 +611,10 @@ public actor FlowStore {
     try fileManager.createDirectory(
       at: directory, withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700])
+    // Creation attributes only apply to a new directory; a backup restore or
+    // a Finder "Get Info" change can loosen an existing one. Best effort: the
+    // file's own 0600 below is the hard requirement.
+    try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
 
     var database: OpaquePointer?
     let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
@@ -625,6 +629,12 @@ public actor FlowStore {
     try executeSQL("PRAGMA journal_mode=WAL")
     try executeSQL("PRAGMA foreign_keys=ON")
     try migrate()
+    for suffix in ["-wal", "-shm"] {
+      let sidecar = url.path + suffix
+      if fileManager.fileExists(atPath: sidecar) {
+        try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: sidecar)
+      }
+    }
   }
 
   /// Ordered migrations; each runs in a transaction and bumps user_version.

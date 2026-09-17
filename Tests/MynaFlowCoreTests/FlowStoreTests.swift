@@ -33,6 +33,18 @@ struct FlowStoreTests {
     )
   }
 
+  @Test("Opening re-tightens a loosened data directory to 0700")
+  func reassertsDirectoryPermissions() async throws {
+    let url = temporaryDatabaseURL()
+    let directory = url.deletingLastPathComponent()
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+    let store = try await FlowStore.open(at: url)
+    let mode = try #require(FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? NSNumber)
+    #expect(mode.intValue & 0o077 == 0)
+    await store.close()
+  }
+
   @Test("Insertion diagnostics round-trip and stay nil for clean insertions")
   func insertionDiagnosticsRoundTrip() async throws {
     let store = try await FlowStore.open(at: temporaryDatabaseURL())

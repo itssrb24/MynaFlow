@@ -7,7 +7,8 @@ import Testing
 struct AppRuleTests {
   private func openStore() async throws -> FlowStore {
     let url = FileManager.default.temporaryDirectory
-      .appendingPathComponent("flow-rules-\(UUID().uuidString).sqlite")
+      .appendingPathComponent("flow-rules-\(UUID().uuidString)", isDirectory: true)
+      .appendingPathComponent("flow.sqlite")
     return try await FlowStore.open(at: url)
   }
 

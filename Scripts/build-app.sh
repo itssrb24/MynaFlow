@@ -26,6 +26,10 @@ rsync -a --exclude SHA256SUMS --exclude README.txt "$RUNTIMES_SRC/" "$RUNTIMES_D
 for binary in "$RUNTIMES_DST"/*; do
   /usr/bin/codesign --force --sign "$SIGN_IDENTITY" "$binary"
 done
+# Seal the manifest the app verifies at launch AFTER signing: signing rewrites
+# the Mach-O files, so the upstream (unsigned) sums in the source tree would
+# never match. The source SHA256SUMS remains the provenance record.
+(cd "$RUNTIMES_DST" && /usr/bin/shasum -a 256 llama-server llama-cli *.dylib > SHA256SUMS)
 
 /usr/bin/codesign --force --deep --options runtime --entitlements Packaging/MynaFlow.entitlements --sign "$SIGN_IDENTITY" "$APP"
 echo "Built $APP"

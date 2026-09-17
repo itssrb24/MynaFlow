@@ -42,9 +42,15 @@ public struct ApplicationPaths: Sendable {
       create: true
     )
     let root = applicationSupport.appendingPathComponent(directoryName, isDirectory: true)
-    try fileManager.createDirectory(
-      at: root, withIntermediateDirectories: true,
-      attributes: [.posixPermissions: 0o700])
-    return ApplicationPaths(root: root)
+    let paths = ApplicationPaths(root: root)
+    // Create, then re-assert: creation attributes do nothing for a directory
+    // that already exists with looser bits.
+    for directory in [root, paths.models, paths.scratch, paths.diagnostics] {
+      try fileManager.createDirectory(
+        at: directory, withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700])
+      try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+    }
+    return paths
   }
 }

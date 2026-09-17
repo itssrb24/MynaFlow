@@ -29,6 +29,8 @@ final class IndicatorModel {
   var elapsedSeconds: Int = 0
   /// Clicking the pill during a toggle session stops it.
   var onStopRequested: () -> Void = {}
+  /// Clicking an error pill that offers a fix (e.g. open System Settings).
+  var onErrorAction: (() -> Void)?
 }
 
 /// An NSPanel that goes exactly where it is put. AppKit constrains ordinary
@@ -195,6 +197,7 @@ struct IndicatorView: View {
       .contentShape(Rectangle())
       .onTapGesture {
         if case .recording(.toggle) = model.display { model.onStopRequested() }
+        if case .error = model.display, let action = model.onErrorAction { action() }
       }
   }
 

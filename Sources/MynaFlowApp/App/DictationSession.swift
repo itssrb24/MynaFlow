@@ -33,6 +33,11 @@ final class DictationSession {
   /// Called after every finished dictation (history refresh).
   var onFinished: () async -> Void = {}
   var onError: (String) -> Void = { _ in }
+  /// A permission was revoked since onboarding. Microphone loss aborts the
+  /// start; Accessibility loss only warns (text still reaches the scratchpad).
+  var onPermissionProblem: (PermissionProblem) -> Void = { _ in }
+
+  enum PermissionProblem { case microphone, accessibility }
 
   init(
     capture: MicrophoneCapture, indicator: IndicatorModel,
@@ -117,9 +122,16 @@ final class DictationSession {
 
   private func beginStart(_ mode: DictationMode) {
     guard permissions.microphoneAuthorization == .authorized else {
-      Task { _ = await permissions.requestMicrophonePermission() }
+      if permissions.microphoneAuthorization == .notDetermined {
+        Task { _ = await permissions.requestMicrophonePermission() }
+      } else {
+        onPermissionProblem(.microphone)
+      }
       handle(.startFailed)
       return
+    }
+    if !permissions.hasAccessibilityPermission {
+      onPermissionProblem(.accessibility)
     }
     guard let controller else {
       handle(.startFailed)
