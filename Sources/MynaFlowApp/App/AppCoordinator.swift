@@ -8,7 +8,7 @@ import os
 @MainActor
 @Observable
 final class AppCoordinator {
-  private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "app")
+  nonisolated private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "app")
 
   let indicator = IndicatorModel()
   private(set) var recentDictations: [DictationRecord] = []
@@ -64,6 +64,10 @@ final class AppCoordinator {
   private var toggleAutoStop: Task<Void, Never>?
   private static let toggleMaximumDuration: Duration = .seconds(600)
   private var lastOutcome: DictationOutcome?
+  /// The in-flight start; a key-up that arrives before it resolves must not
+  /// leave the microphone open with no stop pending.
+  private var pendingStart: Task<Void, Never>?
+  private var releaseArrivedEarly = false
 
   private let launchedAt = Date()
 
@@ -181,7 +185,24 @@ final class AppCoordinator {
   private func watchForCorrection(_ outcome: DictationOutcome) {
     guard outcome.insertionMethod == .ax, outcome.failureMessage == nil, let store else { return }
     correctionWatcher.watch(insertedText: outcome.text, dictationID: outcome.dictationID) { pair in
-      _ = try? await store.logCorrection(pair, dictationID: outcome.dictationID)
+      do {
+        _ = try await store.logCorrection(pair, dictationID: outcome.dictationID)
+      } catch {
+        Self.log.error("correction log failed: \(error)")
+      }
+    }
+  }
+
+  /// Runs a user-initiated store mutation; failures are logged and shown,
+  /// never swallowed into a list that silently didn't change.
+  private func persist(_ what: String, _ operation: () async throws -> Void) async {
+    do {
+      try await operation()
+    } catch {
+      Self.log.error("\(what) failed: \(error)")
+      indicator.display = .error("Couldn't \(what): \(error.localizedDescription)")
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(3))
     }
   }
 
@@ -250,7 +271,7 @@ final class AppCoordinator {
 
   func setTypingWPM(_ value: Double) {
     typingWPM = value
-    Task { try? await store?.setSetting("\(Int(value))", forKey: "typing_wpm") }
+    Task { await persist("save typing speed") { try await store?.setSetting("\(Int(value))", forKey: "typing_wpm") } }
   }
 
   func refreshVocabulary() async {
@@ -260,28 +281,30 @@ final class AppCoordinator {
   }
 
   func addVocabularyTerm(_ term: String) async {
-    try? await store?.addVocabularyTerm(term, source: .manual)
+    await persist("add term") { try await store?.addVocabularyTerm(term, source: .manual) }
     await refreshVocabulary()
     await rebuildControllerForVocabulary()
   }
 
   func removeVocabularyTerm(_ term: String) async {
-    try? await store?.removeVocabularyTerm(term)
+    await persist("remove term") { try await store?.removeVocabularyTerm(term) }
     await refreshVocabulary()
     await rebuildControllerForVocabulary()
   }
 
   func acceptCorrection(_ correction: CorrectionRecord) async {
-    for term in CorrectionDetector.candidateTerms(from: correction.pair) {
-      try? await store?.addVocabularyTerm(term, source: .promoted)
+    await persist("add term") {
+      for term in CorrectionDetector.candidateTerms(from: correction.pair) {
+        try await store?.addVocabularyTerm(term, source: .promoted)
+      }
+      try await store?.resolveCorrection(id: correction.id, status: .accepted)
     }
-    try? await store?.resolveCorrection(id: correction.id, status: .accepted)
     await refreshVocabulary()
     await rebuildControllerForVocabulary()
   }
 
   func dismissCorrection(_ correction: CorrectionRecord) async {
-    try? await store?.resolveCorrection(id: correction.id, status: .dismissed)
+    await persist("dismiss suggestion") { try await store?.resolveCorrection(id: correction.id, status: .dismissed) }
     await refreshVocabulary()
   }
 
@@ -455,7 +478,7 @@ final class AppCoordinator {
   func removeModel(_ descriptor: ModelDescriptor) async {
     guard let modelManager else { return }
     if polishModel?.id == descriptor.id { await languageProvider?.stop() }
-    try? await modelManager.remove(descriptor)
+    await persist("remove model") { try await modelManager.remove(descriptor) }
     await refreshModelStates()
   }
 
@@ -463,8 +486,10 @@ final class AppCoordinator {
     guard let parakeetEngine else { return }
     Task {
       if engineChoice == .parakeet { await setEngine(.apple) }
-      try? await parakeetEngine.remove()
-      parakeetInstalled = false
+      await persist("remove Parakeet") {
+        try await parakeetEngine.remove()
+        parakeetInstalled = false
+      }
     }
   }
 
@@ -479,7 +504,15 @@ final class AppCoordinator {
 
   func searchHistory(_ query: HistoryQuery, limit: Int) async -> [DictationRecord] {
     guard let store else { return [] }
-    return (try? await store.searchDictations(query, limit: limit)) ?? []
+    do {
+      return try await store.searchDictations(query, limit: limit)
+    } catch {
+      Self.log.error("history load failed: \(error)")
+      indicator.display = .error("Couldn't load history: \(error.localizedDescription)")
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(3))
+      return []
+    }
   }
 
   func historyApps() async -> [String] {
@@ -488,12 +521,12 @@ final class AppCoordinator {
   }
 
   func deleteHistory(_ range: DeletionRange) async {
-    try? await store?.deleteDictations(since: range.cutoff())
+    await persist("delete history") { try await store?.deleteDictations(since: range.cutoff()) }
     await refreshRecentDictations()
   }
 
   func deleteHistoryEntry(_ id: UUID) async {
-    try? await store?.deleteDictation(id: id)
+    await persist("delete entry") { try await store?.deleteDictation(id: id) }
     await refreshRecentDictations()
   }
 
@@ -565,7 +598,7 @@ final class AppCoordinator {
   }
 
   func deleteStyle(id: UUID) async {
-    try? await store?.deleteStyle(id: id)
+    await persist("delete style") { try await store?.deleteStyle(id: id) }
     await refreshStyles()
   }
 
@@ -577,7 +610,7 @@ final class AppCoordinator {
     if let data = try? JSONEncoder().encode(hotkeyConfiguration),
       let json = String(data: data, encoding: .utf8)
     {
-      Task { try? await store?.setSetting(json, forKey: "hotkeys") }
+      Task { await persist("save hotkey") { try await store?.setSetting(json, forKey: "hotkeys") } }
     }
   }
 
@@ -591,10 +624,8 @@ final class AppCoordinator {
     selectedInputUID = uid
     capture.preferredDeviceUID = uid
     Task {
-      if let uid {
-        try? await store?.setSetting(uid, forKey: "input_device_uid")
-      } else {
-        try? await store?.setSetting("", forKey: "input_device_uid")
+      await persist("save microphone choice") {
+        try await store?.setSetting(uid ?? "", forKey: "input_device_uid")
       }
     }
   }
@@ -603,7 +634,9 @@ final class AppCoordinator {
     cleanupEnabled = enabled
     Task {
       await controller?.setCleanupEnabled(enabled)
-      try? await store?.setSetting(enabled ? "1" : "0", forKey: "cleanup_enabled")
+      await persist("save cleanup setting") {
+        try await store?.setSetting(enabled ? "1" : "0", forKey: "cleanup_enabled")
+      }
     }
   }
 
@@ -675,18 +708,37 @@ final class AppCoordinator {
     guard let controller else { return }
     // The indicator appears immediately on the hotkey edge — the <100 ms
     // budget — before any async work.
+    let previousDisplay = indicator.display
     indicator.display = .recording(mode: mode == .hold ? .hold : .toggle)
     indicator.audioLevel = 0
     indicator.elapsedSeconds = 0
     indicatorPanel?.show()
 
-    Task {
+    releaseArrivedEarly = false
+    pendingStart?.cancel()
+    pendingStart = Task {
       guard await controller.startDictation(mode: mode) else {
-        await MainActor.run { self.indicator.display = .hidden }
-        indicatorPanel?.hide()
+        // Another dictation (e.g. an active toggle session) owns the mic:
+        // put the indicator back the way it was rather than hiding it.
+        await MainActor.run {
+          if case .recording = previousDisplay {
+            self.indicator.display = previousDisplay
+          } else {
+            self.indicator.display = .hidden
+            self.indicatorPanel?.hide()
+          }
+        }
         return
       }
-      await MainActor.run { self.startCapture() }
+      await MainActor.run {
+        if self.releaseArrivedEarly {
+          // Key-up beat us here: nothing was captured, so cancel cleanly.
+          self.releaseArrivedEarly = false
+          Task { await controller.cancelDictation() }
+        } else {
+          self.startCapture()
+        }
+      }
     }
   }
 
@@ -695,6 +747,10 @@ final class AppCoordinator {
     toggleAutoStop = nil
     toggleSessionActive = false
     stopElapsedTimer()
+    if frameCollector == nil {
+      // Capture has not started yet — the start is still in flight.
+      releaseArrivedEarly = true
+    }
     capture.stop()
     // The frame collector drains the stream to completion, then hands the
     // frames to the controller.
@@ -717,6 +773,8 @@ final class AppCoordinator {
 
   func cancelDictation() {
     guard let controller else { return }
+    pendingStart?.cancel()
+    releaseArrivedEarly = false
     toggleAutoStop?.cancel()
     toggleSessionActive = false
     stopElapsedTimer()
@@ -746,6 +804,7 @@ final class AppCoordinator {
         // dictation was cancelled meanwhile.
         guard !Task.isCancelled else { return }
         let collected = await buffer.frames()
+        await MainActor.run { self.frameCollector = nil }
         await controller.finishRecording(frames: collected)
         await self.refreshRecentDictations()
       }

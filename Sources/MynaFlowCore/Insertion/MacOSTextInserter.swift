@@ -19,11 +19,29 @@ public final class MacOSTextInserter: TextInsertionService {
 
   public init() {}
 
+  /// Processes whose Chromium accessibility tree this session has woken.
+  private var wokenChromiumPids: Set<pid_t> = []
+
+  /// Chromium keeps its accessibility tree dormant until an assistive client
+  /// announces itself, so Electron apps answer focus queries with silence.
+  /// AXManualAccessibility is Electron's documented wake-up switch; native
+  /// apps refuse the attribute and lose nothing. The tree builds
+  /// asynchronously, so the first dictation in a freshly woken app may still
+  /// take the clipboard route; every later one resolves the field.
+  private func wakeChromiumAccessibility(of application: NSRunningApplication) {
+    let pid = application.processIdentifier
+    guard !wokenChromiumPids.contains(pid) else { return }
+    wokenChromiumPids.insert(pid)
+    let element = AXUIElementCreateApplication(pid)
+    _ = AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+  }
+
   /// Snapshot the frontmost app + focused element at dictation start.
   /// Returns the target's bundle identifier for the history record.
   @discardableResult
   public func captureTarget() -> String? {
     capturedApplication = NSWorkspace.shared.frontmostApplication
+    if let capturedApplication { wakeChromiumAccessibility(of: capturedApplication) }
     capturedElement = focusedElement(for: capturedApplication)
 
     if let capturedElement {
@@ -56,29 +74,14 @@ public final class MacOSTextInserter: TextInsertionService {
     }
     let target = focusedTarget ?? currentFocusedElement()
     guard let target else {
+      // Fail closed: with no resolvable focused element we cannot rule out a
+      // password field, so never synthesize a paste into the unknown. The
+      // text goes to the clipboard and history; the indicator says so.
       let previousClipboard = clipboardBeforeOwnedWrite()
       let clipboardReady = copyToClipboard(text)
-      let ownedChangeCount = NSPasteboard.general.changeCount
-      if clipboardReady, applicationReady {
-        let menuPasteSucceeded = performPasteMenuItem(in: capturedApplication)
-        if !menuPasteSucceeded {
-          postPasteShortcut()
-        }
-        try? await Task.sleep(for: .milliseconds(350))
-        if pressEnter { postKey(keyCode: 36) }
-        // We pasted programmatically, so the text no longer needs to live on
-        // the pasteboard — restore the user's previous contents.
-        restoreClipboard(
-          to: previousClipboard, onlyIfCurrentEquals: text,
-          expectedChangeCount: ownedChangeCount)
-        lastInsertionDiagnostics = diagnostic(
-          route: menuPasteSucceeded ? "application-menu-paste" : "application-key-paste",
-          role: "unavailable", focus: "app-restored",
-          clipboard: "ready", value: "unavailable")
-        return .pastedFromClipboard
-      }
+      _ = applicationReady
       lastInsertionDiagnostics = diagnostic(
-        route: "clipboard-only", role: "unavailable", focus: "failed",
+        route: "clipboard-only", role: "unavailable", focus: "unresolved",
         clipboard: clipboardReady ? "ready" : "failed", value: "unavailable")
       if clipboardReady { scheduleClipboardCleanup(payload: text, previous: previousClipboard) }
       return .noFocusedField
@@ -265,7 +268,9 @@ public final class MacOSTextInserter: TextInsertionService {
   ) -> TextInsertionResult {
     let role: String = current.flatMap { copyAttribute($0, kAXRoleAttribute) } ?? ""
     let subrole: String = current.flatMap { copyAttribute($0, kAXSubroleAttribute) } ?? ""
-    if SecureFieldDetector.isSecure(role: role, subrole: subrole) {
+    // Unresolvable new focus is indeterminate: treat it as secure rather than
+    // placing the text where a password field might be listening.
+    if current == nil || SecureFieldDetector.isSecure(role: role, subrole: subrole) {
       if restorePreviousClipboard {
         restoreClipboard(
           to: previousClipboard, onlyIfCurrentEquals: text,
@@ -305,51 +310,6 @@ public final class MacOSTextInserter: TextInsertionService {
     }
     try? await Task.sleep(for: .milliseconds(200))
     return activated || application.isActive
-  }
-
-  /// Invokes the destination application's own Paste menu item. This is the
-  /// most reliable responder-chain route for Electron editors that do not
-  /// expose their focused contenteditable element through Accessibility.
-  private func performPasteMenuItem(in application: NSRunningApplication?) -> Bool {
-    guard let application, application.isActive else { return false }
-    let applicationElement = AXUIElementCreateApplication(application.processIdentifier)
-    guard let menuBar: AXUIElement = copyAttribute(applicationElement, kAXMenuBarAttribute) else {
-      return false
-    }
-
-    var remainingElements = 250
-    guard
-      let pasteItem = pasteMenuItem(
-        under: menuBar, depth: 0, remainingElements: &remainingElements)
-    else { return false }
-
-    return AXUIElementPerformAction(pasteItem, kAXPressAction as CFString) == .success
-  }
-
-  private func pasteMenuItem(
-    under element: AXUIElement,
-    depth: Int,
-    remainingElements: inout Int
-  ) -> AXUIElement? {
-    guard depth < 7, remainingElements > 0 else { return nil }
-    remainingElements -= 1
-
-    let role: String = copyAttribute(element, kAXRoleAttribute) ?? ""
-    let title: String = copyAttribute(element, kAXTitleAttribute) ?? ""
-    let enabled: Bool = copyAttribute(element, kAXEnabledAttribute) ?? true
-    if role == (kAXMenuItemRole as String), enabled, title == "Paste" {
-      return element
-    }
-
-    let children: [AXUIElement] = copyAttribute(element, kAXChildrenAttribute) ?? []
-    for child in children {
-      if let match = pasteMenuItem(
-        under: child, depth: depth + 1, remainingElements: &remainingElements)
-      {
-        return match
-      }
-    }
-    return nil
   }
 
   private func postPasteShortcut() {

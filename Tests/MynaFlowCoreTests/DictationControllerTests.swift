@@ -20,8 +20,24 @@ private struct FakeEngine: SpeechEngine, TranscriptionProviding {
 
 private actor FakeStore: DictationStoring {
   private(set) var records: [DictationRecord] = []
+  var failNextInsert = false
+  func setFailNextInsert(_ value: Bool) { failNextInsert = value }
   func insert(_ record: DictationRecord) async throws {
+    if failNextInsert { throw FlowStoreError(message: "disk full") }
     records.append(record)
+  }
+}
+
+/// Engine whose transcribe can run arbitrary async work mid-flight — used to
+/// cancel the dictation while the controller is suspended on transcription.
+private struct HookedEngine: SpeechEngine, TranscriptionProviding {
+  let id: EngineID = .apple
+  let hook: @Sendable () async -> Void
+  var isAvailable: Bool { get async { true } }
+  func prepare() async {}
+  func transcribe(audio: URL, hints: [String]) async throws -> TranscriptionResult {
+    await hook()
+    return TranscriptionResult(text: "um hello there", durationSeconds: 2)
   }
 }
 
@@ -106,6 +122,10 @@ private final class OutcomeCollector: @unchecked Sendable {
     defer { lock.unlock() }
     return outcomes
   }
+}
+
+private final class ControllerHolder: @unchecked Sendable {
+  var controller: DictationController?
 }
 
 // MARK: - Tests
@@ -303,6 +323,50 @@ struct DictationControllerTests {
     #expect(outcome.insertionMethod == .historyOnly)
     #expect(outcome.wordCount == 2)
     #expect(outcome.failureMessage == nil)
+  }
+
+  @Test("History write failure copies the text to the clipboard and reports failure")
+  func storeFailureKeepsText() async throws {
+    let store = FakeStore()
+    await store.setFailNextInsert(true)
+    let recorder = Recorder()
+    let controller = makeController(store: store, recorder: recorder)
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    #expect(recorder.clipboardTexts == ["Hello there."])
+    let state = await controller.state
+    guard case .failed(let message) = state else {
+      Issue.record("expected failed state, got \(state)")
+      return
+    }
+    #expect(message.contains("history"))
+  }
+
+  @Test("Cancel during transcription suppresses insertion and the history row")
+  func cancelDuringTranscription() async throws {
+    let store = FakeStore()
+    let recorder = Recorder()
+    let scratch = FileManager.default.temporaryDirectory
+      .appendingPathComponent("flow-cancel-\(UUID().uuidString)", isDirectory: true)
+    let holder = ControllerHolder()
+    let engine = HookedEngine { await holder.controller?.cancelDictation() }
+    let controller = DictationController(
+      engine: engine, cleaner: TranscriptCleaner(), store: store, scratchDirectory: scratch,
+      dependencies: DictationDependencies(
+        captureTarget: { nil }, clearTarget: {},
+        insert: { text in
+          recorder.recordInsert(text)
+          return .inserted
+        },
+        copyToClipboard: { _ in true }))
+    holder.controller = controller
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    #expect(recorder.insertedTexts.isEmpty, "cancelled dictation must not insert")
+    let records = await store.records
+    #expect(records.isEmpty)
+    let state = await controller.state
+    #expect(state == .cancelled)
   }
 
   @Test("Empty audio fails cleanly without a history row")

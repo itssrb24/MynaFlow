@@ -169,29 +169,41 @@ public actor DictationController {
       await failDictation("Nothing recognized")
       return
     }
-    try? machine.apply(.finish(text))
+    // The actor was suspended during transcription; a cancel may have landed
+    // meanwhile. A cancelled dictation must produce no side effects at all.
+    do {
+      try machine.apply(.finish(text))
+    } catch {
+      return
+    }
     onStateChange(machine.state)
 
     // Insert — and no matter what happens now, the text reaches history.
     var insertionMethod: InsertionMethod
     var failureMessage: String?
+    var blockedBySecureField = false
+    var onClipboard = false
     do {
       switch try await dependencies.insert(text) {
       case .inserted, .replacedSelection, .pastedFromClipboard:
         insertionMethod = .ax
       case .copiedToClipboard:
         insertionMethod = .clipboard
+        onClipboard = true
       case .noFocusedField:
         // The inserter already copied the text; record the recovery route.
         insertionMethod = .historyOnly
+        onClipboard = true
       case .blockedSecureField:
         // History only — deliberately no clipboard copy for password fields.
         insertionMethod = .historyOnly
+        blockedBySecureField = true
         failureMessage = "Blocked: the focused field is a password field"
       }
     } catch {
       insertionMethod = .historyOnly
       if await dependencies.copyToClipboard(text) {
+        onClipboard = true
         failureMessage = "Saved to history and copied to clipboard"
       } else {
         failureMessage = "Saved to history; clipboard unavailable"
@@ -212,7 +224,22 @@ public actor DictationController {
       targetApp: session?.targetApplication,
       insertionMethod: insertionMethod,
       processingMs: processingMs)
-    try? await store.insert(record)
+    do {
+      try await store.insert(record)
+    } catch {
+      // The one place the never-lose-text invariant could break: keep the
+      // text on the clipboard and say so, instead of reporting success.
+      // Password-field blocks stay off the pasteboard even now.
+      if blockedBySecureField {
+        failureMessage = "Blocked: password field — and history could not be saved (\(error))"
+      } else {
+        if !onClipboard, await dependencies.copyToClipboard(text) { onClipboard = true }
+        failureMessage =
+          onClipboard
+          ? "Could not save to history (\(error)) — text is on the clipboard"
+          : "Could not save to history (\(error))"
+      }
+    }
     onOutcome(
       DictationOutcome(
         dictationID: record.id,
