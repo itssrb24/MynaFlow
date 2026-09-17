@@ -103,6 +103,7 @@ struct MenuBarMenu: View {
     Button("Re-insert Last Dictation") { coordinator.reinsertLast() }
       .disabled(coordinator.recentDictations.isEmpty)
     Button("Undo Last Dictation") { coordinator.undoLastDictation() }
+    Button("Open Scratchpad") { coordinator.openScratchpad() }
     Divider()
     if coordinator.recentDictations.isEmpty {
       Text("No dictations yet")

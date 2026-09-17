@@ -9,6 +9,8 @@ public enum HotkeyAction: String, CaseIterable, Codable, Sendable {
   case undoLast
   /// Put the most recent dictation at the cursor again.
   case reinsertLast
+  /// Floating note to dictate into when nothing else is focused.
+  case openScratchpad
   /// Polish the selection with the style bound to this slot (1–5).
   case style1, style2, style3, style4, style5
 
@@ -19,6 +21,7 @@ public enum HotkeyAction: String, CaseIterable, Codable, Sendable {
     case .cancel: "Cancel"
     case .undoLast: "Undo last dictation"
     case .reinsertLast: "Re-insert last dictation"
+    case .openScratchpad: "Open scratchpad"
     case .style1: "Style slot 1"
     case .style2: "Style slot 2"
     case .style3: "Style slot 3"

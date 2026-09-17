@@ -14,6 +14,7 @@ struct HotkeysView: View {
         row(.cancel, note: "Discards the current dictation (or a polish still thinking).")
         row(.undoLast, note: "⌘Z in the app that just received a dictation (within 90 seconds).")
         row(.reinsertLast, note: "Puts your most recent dictation at the cursor again.")
+        row(.openScratchpad, note: "Opens a floating note you can dictate into, then paste anywhere.")
       }
       .raised()
 

@@ -76,6 +76,10 @@ final class AppCoordinator {
   private(set) var userFillers: [String] = []
   private(set) var indicatorPlacement: IndicatorPlacement = .bottomCenter
   private(set) var soundFeedback = false
+  private(set) var scratchpadEnabled = true
+  private let scratchpadModel = ScratchpadModel()
+  private var scratchpad: ScratchpadPanelController?
+  private var scratchpadTarget: NSRunningApplication?
   private(set) var toggleMaximumMinutes = 10
   private(set) var idleUnloadMinutes = 5
   private(set) var suggestedRules: [StoredLearnedRule] = []
@@ -158,6 +162,7 @@ final class AppCoordinator {
         indicatorPanel?.placement = placement
       }
       soundFeedback = (try? await store.setting(forKey: "sound_feedback")) == "1"
+      scratchpadEnabled = (try? await store.setting(forKey: "scratchpad_enabled")) != "0"
       if let raw = try? await store.setting(forKey: "toggle_max_minutes"), let value = Int(raw), value > 0 {
         toggleMaximumMinutes = value
       }
@@ -942,6 +947,89 @@ final class AppCoordinator {
     Task { await persist("save indicator position") { try await store?.setSetting(placement.rawValue, forKey: "indicator_placement") } }
   }
 
+  func setScratchpadEnabled(_ enabled: Bool) {
+    scratchpadEnabled = enabled
+    Task { await persist("save scratchpad setting") { try await store?.setSetting(enabled ? "1" : "0", forKey: "scratchpad_enabled") } }
+  }
+
+  // MARK: - Scratchpad
+
+  /// Opens the note with `text` (or whatever it already holds), remembering
+  /// the app in front so "Paste into" goes back there.
+  func openScratchpad(with text: String? = nil) {
+    let front = NSWorkspace.shared.frontmostApplication
+    let target = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? scratchpadTarget : front
+    showScratchpad(text: text ?? scratchpadModel.text, target: target)
+  }
+
+  private func showScratchpad(text: String, target: NSRunningApplication?) {
+    if scratchpad == nil {
+      scratchpad = ScratchpadPanelController(model: scratchpadModel)
+      scratchpadModel.onPaste = { [weak self] in self?.pasteScratchpad() }
+      scratchpadModel.onCopy = { [weak self] in
+        guard let self else { return }
+        copyToClipboard(scratchpadModel.text)
+        flash(.success(words: 0, note: "Copied"))
+      }
+      scratchpadModel.onPolish = { [weak self] style in self?.polishScratchpad(style: style) }
+      scratchpadModel.onClose = { [weak self] in self?.scratchpad?.hide() }
+    }
+    scratchpadTarget = target
+    scratchpadModel.text = text
+    scratchpadModel.targetName = target?.localizedName
+    scratchpadModel.styles = styles
+    scratchpadModel.polishAvailable = polishAvailable
+    scratchpad?.show()
+  }
+
+  private func pasteScratchpad() {
+    let text = scratchpadModel.text
+    guard !text.isEmpty else { return }
+    Task {
+      guard let target = scratchpadTarget, !target.isTerminated else {
+        copyToClipboard(text)
+        flash(.clipboardFallback)
+        return
+      }
+      target.activate()
+      try? await Task.sleep(for: .milliseconds(300))
+      inserter.captureTarget()
+      let result = try? await inserter.insert(text, replacingSelection: false, pressEnter: false)
+      inserter.clearTarget()
+      switch result {
+      case .inserted, .replacedSelection, .pastedFromClipboard:
+        scratchpad?.hide()
+        scratchpadModel.text = ""
+        flash(.success(words: text.split(whereSeparator: \.isWhitespace).count, note: nil))
+      case .blockedSecureField:
+        flash(.error("Blocked: password field"))
+      default:
+        copyToClipboard(text)
+        flash(.clipboardFallback)
+      }
+    }
+  }
+
+  private func polishScratchpad(style: Style) {
+    let text = scratchpadModel.text
+    guard !text.isEmpty, scratchpadModel.busyStyle == nil else { return }
+    scratchpadModel.busyStyle = style.name
+    Task {
+      defer { scratchpadModel.busyStyle = nil }
+      if let polished = await polishText(text, styleID: style.id) {
+        scratchpadModel.text = polished.text
+      } else {
+        flash(.error("Polish failed — text unchanged"))
+      }
+    }
+  }
+
+  private func flash(_ display: IndicatorDisplay, seconds: Double = 1.5) {
+    indicator.display = display
+    indicatorPanel?.show()
+    scheduleIndicatorHide(after: .seconds(seconds))
+  }
+
   func setSoundFeedback(_ enabled: Bool) {
     soundFeedback = enabled
     session?.soundFeedback = enabled
@@ -1084,6 +1172,7 @@ final class AppCoordinator {
         switch action {
         case .undoLast: self?.undoLastDictation()
         case .reinsertLast: self?.reinsertLast()
+        case .openScratchpad: self?.openScratchpad()
         default: self?.polishSelection(action: action)
         }
       })
@@ -1199,6 +1288,11 @@ final class AppCoordinator {
       if let outcome = lastOutcome, outcome.insertionMethod == .historyOnly {
         indicator.display = .clipboardFallback
         scheduleIndicatorHide(after: .seconds(2.5))
+        // Password-field blocks carry a failure message and never reach the
+        // note: that text stays in history only.
+        if scratchpadEnabled, outcome.failureMessage == nil {
+          showScratchpad(text: outcome.text, target: NSWorkspace.shared.frontmostApplication)
+        }
       } else {
         // Fallback is a quiet inline note, never an interruption.
         let note = lastOutcome?.fallbackOccurred == true ? "via Apple Speech — Parakeet fell back" : nil

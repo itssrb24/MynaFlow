@@ -90,6 +90,18 @@ struct AudioView: View {
         }
         .toggleStyle(.switch)
         .tint(Theme.Colors.accent)
+        Toggle(isOn: Binding(
+          get: { coordinator.scratchpadEnabled },
+          set: { coordinator.setScratchpadEnabled($0) })
+        ) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Open the scratchpad when nothing is focused").font(Theme.Fonts.bodyStrong).foregroundStyle(Theme.Colors.textPrimary)
+            Text("A floating note holds the text with Paste, Copy and Polish. Also available any time from the menu or its hotkey.")
+              .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
+          }
+        }
+        .toggleStyle(.switch)
+        .tint(Theme.Colors.accent)
         HStack(spacing: Theme.Spacing.sm) {
           Text("Toggle mode auto-stops after").font(Theme.Fonts.body).foregroundStyle(Theme.Colors.textPrimary)
           Stepper(

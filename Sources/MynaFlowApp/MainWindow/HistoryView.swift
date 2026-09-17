@@ -219,6 +219,7 @@ private struct HistoryRow: View {
       HStack(spacing: Theme.Spacing.sm) {
         Button("Copy") { coordinator.copyToClipboard(record.finalText) }
         Button("Re-insert") { Task { await coordinator.reinsert(record) } }
+        Button("Scratchpad") { coordinator.openScratchpad(with: record.finalText) }
         Menu("Re-polish") {
           ForEach(styles) { style in
             Button(style.name) {
