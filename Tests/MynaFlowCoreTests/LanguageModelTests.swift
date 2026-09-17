@@ -21,18 +21,6 @@ struct GemmaAdapterTests {
   }
 }
 
-@Suite("SSEEvent")
-struct SSEEventTests {
-  @Test("Parses content, stop, and ignores non-data lines")
-  func parsing() {
-    #expect(SSEEvent.parse(#"data: {"content":"tok"}"#) == .content("tok"))
-    #expect(SSEEvent.parse(#"data: {"content":"","stop":true}"#) == .stop)
-    #expect(SSEEvent.parse(": keep-alive") == nil)
-    #expect(SSEEvent.parse("") == nil)
-    #expect(SSEEvent.parse("data: not-json") == nil)
-  }
-}
-
 @Suite("LlamaServerHost policies")
 struct LlamaServerPolicyTests {
   @Test("Idle unload fires only at or past the timeout")

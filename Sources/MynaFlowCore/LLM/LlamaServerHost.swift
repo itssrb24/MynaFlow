@@ -122,60 +122,6 @@ public actor LlamaServerHost {
     return content
   }
 
-  /// Streaming completion: the same request with `"stream": true`, yielding
-  /// tokens as SSE events arrive. Ends on the server's stop event or when the
-  /// consumer cancels (terminating the stream cancels the underlying request).
-  public func completeStream(
-    prompt: String, maxTokens: Int, temperature: Double = 0.2, stop: [String]
-  ) async throws -> AsyncThrowingStream<String, Error> {
-    let base = try await ensureReady()
-    guard let apiToken else {
-      throw LlamaServerError.failedToLaunch("server authentication was not initialized")
-    }
-    lastUsed = Date()
-
-    var request = Self.authenticatedRequest(
-      url: base.appendingPathComponent("completion"), apiToken: apiToken)
-    request.httpMethod = "POST"
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.httpBody = try JSONSerialization.data(withJSONObject: [
-      "prompt": prompt,
-      "n_predict": maxTokens,
-      "temperature": temperature,
-      "stop": stop,
-      "cache_prompt": true,
-      "stream": true,
-    ])
-
-    // makeStream keeps strict concurrency happy: the reader Task captures only
-    // Sendable values (session, request, continuation) — no actor state. Idle
-    // accounting uses the pre-stream `lastUsed` stamp above; a long generation
-    // never exceeds the idle window in practice.
-    let session = self.session
-    let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
-    let task = Task {
-      do {
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-          throw LlamaServerError.badResponse((response as? HTTPURLResponse)?.statusCode ?? -1)
-        }
-        for try await line in bytes.lines {
-          guard !Task.isCancelled else { break }
-          switch SSEEvent.parse(line) {
-          case .content(let token): continuation.yield(token)
-          case .stop: continuation.finish(); return
-          case nil: continue
-          }
-        }
-        continuation.finish()
-      } catch {
-        continuation.finish(throwing: error)
-      }
-    }
-    continuation.onTermination = { _ in task.cancel() }
-    return stream
-  }
-
   // MARK: Configuration changes
 
   /// Swap the active model (or idle timeout). A model change tears the current
@@ -580,25 +526,5 @@ public struct CappedByteBuffer: Sendable {
     if data.count > capacity {
       data.removeFirst(data.count - capacity)
     }
-  }
-}
-
-/// One line of a llama-server SSE stream.
-public enum SSEEvent: Equatable, Sendable {
-  case content(String)
-  case stop
-
-  /// Parses a single SSE line. Non-data lines (comments, blank keep-alives,
-  /// event names, malformed JSON) return nil and are skipped by the caller.
-  public static func parse(_ line: String) -> SSEEvent? {
-    guard line.hasPrefix("data:") else { return nil }
-    let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-    guard let data = payload.data(using: .utf8),
-      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    else { return nil }
-    let content = object["content"] as? String ?? ""
-    if !content.isEmpty { return .content(content) }
-    if (object["stop"] as? Bool) == true { return .stop }
-    return nil
   }
 }

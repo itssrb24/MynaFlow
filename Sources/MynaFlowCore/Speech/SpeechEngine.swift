@@ -5,9 +5,8 @@ public enum EngineID: String, Codable, Equatable, Sendable {
   case parakeet
 }
 
-/// The transcription outcome. Deliberately a struct rather than a bare String
-/// so a v0.2 streaming experiment can add partial-result fields without
-/// touching every engine.
+/// The transcription outcome. Streaming is out of scope by decision: text
+/// appears after release, never during.
 public struct TranscriptionResult: Equatable, Sendable {
   public let text: String
   public let durationSeconds: Double
