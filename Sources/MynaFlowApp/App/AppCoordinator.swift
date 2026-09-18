@@ -112,6 +112,8 @@ final class AppCoordinator {
   /// Set when startup failed outright: nothing works, and the menu says why
   /// rather than looking healthy and doing nothing.
   private(set) var startupFailure: String?
+  /// The first check is not a transition — it is simply the first look.
+  private var hasCheckedAccessibility = false
 
   private let launchedAt = Date()
 
@@ -150,7 +152,7 @@ final class AppCoordinator {
       }
       diag(
         "startup: schema v\(await store.schemaVersion()), "
-          + "recovered=\(recoveredDatabaseURL != nil), strandedAudio=\(strandedAudio)")
+          + "recovered=\(recoveredDatabaseURL != nil), swept \(strandedAudio) scratch files")
       let apple = AppleSpeechEngine()
       await apple.resolveLocale()
       appleEngine = apple
@@ -452,7 +454,8 @@ final class AppCoordinator {
 
   func refreshPermissions() {
     microphoneGranted = permissions.microphoneAuthorization == .authorized
-    let wasGranted = accessibilityGranted
+    let wasGranted = accessibilityGranted || !hasCheckedAccessibility
+    hasCheckedAccessibility = true
     accessibilityGranted = permissions.hasAccessibilityPermission
     // A global event monitor is only live if the process was trusted when it
     // was created. On a first run the app starts untrusted, so the monitor
