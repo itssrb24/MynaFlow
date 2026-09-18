@@ -84,6 +84,16 @@ Signing uses the first "Apple Development" identity in your keychain, or set
 to an ad-hoc signature, because an ad-hoc bundle gets a weak, path-based
 Accessibility grant.
 
+`release.sh` instead prefers a self-signed certificate named **Myna Flow**, so
+that published downloads do not carry a personal Apple Development identity
+(which embeds the developer's email address in every copy). Create one in
+Keychain Access ▸ Certificate Assistant ▸ Create a Certificate, with identity
+type "Self Signed Root" and certificate type "Code Signing". Neither kind of
+signature is notarized, so this changes nothing about how the app installs —
+but unlike ad-hoc it is a stable identity, so Accessibility grants survive
+updates. It also strips the linker's debug map, which would otherwise record
+the build machine's home directory inside the shipped binary.
+
 ## Third-party code
 
 - **ThinkingOrbsKit** — the animated orbs, MIT, © 2026 Jakub Antalik. Vendored

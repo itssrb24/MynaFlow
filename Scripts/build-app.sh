@@ -3,7 +3,12 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-swift build -c release
+
+# SwiftPM bakes the absolute path of its build directory into the binary, for
+# the resource bundles of dependencies. Building a published artifact from a
+# neutral scratch path keeps the author's home directory out of it.
+SCRATCH=${SCRATCH:-.build}
+swift build -c release --scratch-path "$SCRATCH"
 
 # A stable identity keeps TCC grants (Accessibility, mic) across rebuilds;
 # ad-hoc signatures change every build and macOS holds a stale entry. Worse,
@@ -24,7 +29,13 @@ echo "Signing with: $SIGN_IDENTITY"
 APP="dist/Myna Flow.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp .build/release/MynaFlow "$APP/Contents/MacOS/MynaFlow"
+cp "$SCRATCH/release/MynaFlow" "$APP/Contents/MacOS/MynaFlow"
+# The linker embeds a debug map — the absolute path of every .o and every
+# source file — so a debugger can find them later. That map names the build
+# machine's home directory, and it ships in every copy of the app. Strip it;
+# release builds have no .o files to point at anyway. This must happen before
+# signing, since modifying a binary invalidates its signature.
+/usr/bin/strip -S "$APP/Contents/MacOS/MynaFlow"
 cp Packaging/Info.plist "$APP/Contents/Info.plist"
 
 # llama.cpp runtimes (server + CLI + dylibs); provenance in SHA256SUMS.
