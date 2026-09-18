@@ -95,7 +95,7 @@ enum IndicatorPlacement: String, CaseIterable {
 
 @MainActor
 final class IndicatorPanelController {
-  private static let contentSize = NSSize(width: 260, height: 64)
+  private static let contentSize = NSSize(width: 280, height: 78)
   private static let shadowMargin: CGFloat = 30
   private static let edgeInset: CGFloat = 24
 
@@ -221,14 +221,11 @@ struct IndicatorView: View {
 
   var body: some View {
     content
-      .frame(width: 260, height: 64)
-      .background(
-        RoundedRectangle(cornerRadius: 20, style: .continuous)
-          .fill(Color(nsColor: .windowBackgroundColor).opacity(0.92))
-          .shadow(color: .black.opacity(0.35), radius: 14, y: 6))
-      .overlay(
-        RoundedRectangle(cornerRadius: 20, style: .continuous)
-          .strokeBorder(borderColor, lineWidth: borderWidth))
+      .frame(width: 280, height: 78)
+      // The shade is allowed to spill into the window's transparent margin,
+      // so it fades to nothing in free space. Clipped to the content frame it
+      // would end mid-gradient and show as faint straight edges.
+      .background(shade.padding(-28))
       .padding(30)
       .animation(.easeOut(duration: 0.15), value: model.display)
       .opacity(model.display == .hidden ? 0 : 1)
@@ -239,17 +236,26 @@ struct IndicatorView: View {
       }
   }
 
-  /// Toggle mode gets a persistent accent border so the two recording modes
-  /// can never be confused.
-  private var borderColor: Color {
-    if case .recording(.toggle) = model.display { return .orange }
-    return .white.opacity(0.08)
+  /// There is no panel: the orb floats straight on the desktop. It also
+  /// floats over white documents, though, where white dots and white text
+  /// would simply disappear — so this sits underneath. An elliptical gradient
+  /// with no hard edge reads as ambient shade rather than a box, which is the
+  /// whole point, while still giving the content something to be legible
+  /// against. Set `shadeStrength` to 0 for a completely bare orb.
+  private var shade: some View {
+    EllipticalGradient(
+      gradient: Gradient(stops: [
+        .init(color: .black.opacity(Self.shadeStrength), location: 0),
+        .init(color: .black.opacity(Self.shadeStrength * 0.62), location: 0.45),
+        .init(color: .black.opacity(Self.shadeStrength * 0.22), location: 0.75),
+        .init(color: .clear, location: 1),
+      ]),
+      center: .center, startRadiusFraction: 0, endRadiusFraction: 0.52
+    )
+    .allowsHitTesting(false)
   }
 
-  private var borderWidth: CGFloat {
-    if case .recording(.toggle) = model.display { return 2 }
-    return 1
-  }
+  private static let shadeStrength: Double = 0.62
 
   @ViewBuilder
   private var content: some View {
@@ -258,7 +264,8 @@ struct IndicatorView: View {
       EmptyView()
     case .recording(let mode):
       HStack(spacing: 10) {
-        ReactiveOrb(state: .composing, level: model.orbLevel, phase: model.orbPhase)
+        ReactiveOrb(
+          state: .composing, displaySize: 62, level: model.orbLevel, phase: model.orbPhase)
         VStack(alignment: .leading, spacing: 2) {
           Text(mode == .hold ? "Listening" : "Listening — toggle")
             .font(.system(size: 13, weight: .semibold))
@@ -276,7 +283,7 @@ struct IndicatorView: View {
       .padding(.horizontal, 18)
     case .processing(let engine):
       HStack(spacing: 10) {
-        ReactiveOrb(state: .working, displaySize: 44)
+        ReactiveOrb(state: .working, displaySize: 50)
         VStack(alignment: .leading, spacing: 2) {
           Text("Transcribing")
             .font(.system(size: 13, weight: .semibold))
@@ -324,7 +331,7 @@ struct IndicatorView: View {
       .padding(.horizontal, 14)
     case .polishing(let style):
       HStack(spacing: 10) {
-        ReactiveOrb(state: .solving, displaySize: 44)
+        ReactiveOrb(state: .solving, displaySize: 50)
         VStack(alignment: .leading, spacing: 2) {
           Text("Polishing")
             .font(.system(size: 13, weight: .semibold))
