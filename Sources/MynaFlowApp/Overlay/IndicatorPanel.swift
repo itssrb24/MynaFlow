@@ -95,7 +95,7 @@ enum IndicatorPlacement: String, CaseIterable {
 
 @MainActor
 final class IndicatorPanelController {
-  private static let contentSize = NSSize(width: 280, height: 78)
+  private static let contentSize = NSSize(width: 340, height: 78)
   private static let shadowMargin: CGFloat = 30
   private static let edgeInset: CGFloat = 24
 
@@ -252,17 +252,24 @@ private struct GlassBackdrop: NSViewRepresentable {
 struct IndicatorView: View {
   let model: IndicatorModel
 
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
   var body: some View {
     content
-      .frame(width: 280, height: 78)
-      .animation(.easeOut(duration: 0.15), value: model.display)
+      .padding(.horizontal, 16)
+      .padding(.vertical, 8)
+      .frame(minHeight: 62)
       .background(glass)
+      // The pill is only as wide as what it is saying, and morphs when that
+      // changes — so it carries the same low-bounce spring as the shapes it
+      // borrows from rather than snapping between widths.
+      .animation(morph, value: model.display)
       // Appearing should feel like the key press itself, so it pops in on a
       // short spring rather than fading over 150 ms, which reads as lag.
       .scaleEffect(isVisible ? 1 : 0.92)
       .opacity(isVisible ? 1 : 0)
-      .animation(.spring(response: 0.22, dampingFraction: 0.76), value: isVisible)
-      .padding(30)
+      .animation(appear, value: isVisible)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
       .contentShape(Rectangle())
       .onTapGesture {
         if case .recording(.toggle) = model.display { model.onStopRequested() }
@@ -271,6 +278,18 @@ struct IndicatorView: View {
   }
 
   private var isVisible: Bool { model.display != .hidden }
+
+  /// Reduced motion keeps the cross-fade, which aids comprehension, and drops
+  /// the movement.
+  private var appear: Animation {
+    reduceMotion
+      ? .easeOut(duration: 0.12) : .spring(response: 0.22, dampingFraction: 0.76)
+  }
+
+  private var morph: Animation {
+    reduceMotion
+      ? .easeOut(duration: 0.12) : .spring(response: 0.34, dampingFraction: 0.9)
+  }
 
   /// Real glass, not a dark rectangle: an `NSVisualEffectView` blurring
   /// whatever is behind the window, held to a dark appearance so the white
@@ -285,12 +304,17 @@ struct IndicatorView: View {
     return shape
       .fill(Color.clear)
       .background(GlassBackdrop().clipShape(shape))
-      // Smoked, not clear. The blur alone tracks whatever is behind it, so
-      // over a white page it comes back pale and the white orb washes out.
-      // This floor keeps the contrast constant wherever the pill lands, while
-      // still letting the background read through.
-      .overlay(shape.fill(Color.black.opacity(0.30)))
+      // Just enough smoke to hold white content against a white page. Most of
+      // the density comes from the tint above it rather than from black,
+      // which is what keeps it reading as coloured glass and not a dark chip.
+      .overlay(shape.fill(Color.black.opacity(0.16)))
       .overlay(shape.fill(tint))
+      // A sheen along the top, as if the pane were catching light from above.
+      .overlay(
+        shape.fill(
+          LinearGradient(
+            colors: [.white.opacity(0.14), .white.opacity(0.03), .clear],
+            startPoint: .top, endPoint: .center)))
       .overlay(
         shape
           .stroke(Color.black.opacity(0.35), lineWidth: 2)
@@ -307,24 +331,34 @@ struct IndicatorView: View {
       .allowsHitTesting(false)
   }
 
-  /// The glass picks up a wash of colour from whatever is happening, and
-  /// while you are speaking it breathes with your voice. Kept desaturated and
-  ///low in opacity: a tint, not a colour cast.
-  private var tint: Color {
+  /// The glass takes its colour from whatever is happening, and while you
+  /// are speaking it breathes with your voice. A gradient rather than a flat
+  /// wash: colour pooling towards the top edge is what separates glass from a
+  /// coloured rectangle. Kept desaturated — a tint, not a colour cast.
+  private var tint: some ShapeStyle {
+    let base = tintColor
+    return LinearGradient(
+      colors: [base.opacity(1), base.opacity(0.55), base.opacity(0.75)],
+      startPoint: .topLeading, endPoint: .bottomTrailing)
+  }
+
+  private var tintColor: Color {
     switch model.display {
     case .recording(.hold):
-      return Theme.Colors.accent.opacity(0.05 + 0.15 * model.orbLevel)
+      return Theme.Colors.accent.opacity(0.13 + 0.22 * model.orbLevel)
     case .recording(.toggle):
-      return Color.orange.opacity(0.08 + 0.14 * model.orbLevel)
+      return Color.orange.opacity(0.16 + 0.20 * model.orbLevel)
     case .processing:
-      return Theme.Colors.accent.opacity(0.06)
+      return Theme.Colors.accent.opacity(0.15)
     case .polishing:
-      return Theme.Colors.accent.opacity(0.08)
+      return Theme.Colors.accent.opacity(0.18)
     case .error:
-      return Color.red.opacity(0.13)
+      return Color.red.opacity(0.22)
     case .success, .clipboardFallback:
-      return Color.green.opacity(0.10)
-    case .downloading, .hidden:
+      return Color.green.opacity(0.17)
+    case .downloading:
+      return Theme.Colors.accent.opacity(0.12)
+    case .hidden:
       return Color.clear
     }
   }
@@ -346,13 +380,12 @@ struct IndicatorView: View {
             .foregroundStyle(.secondary)
         }
         if mode == .toggle {
-          Spacer(minLength: 0)
           Image(systemName: "stop.circle.fill")
             .font(.system(size: 18))
             .foregroundStyle(.orange)
+            .padding(.leading, 2)
         }
       }
-      .padding(.horizontal, 18)
     case .processing(let engine):
       HStack(spacing: 10) {
         ReactiveOrb(state: .working, displaySize: 50)
@@ -365,7 +398,6 @@ struct IndicatorView: View {
             .lineLimit(1)
         }
       }
-      .padding(.horizontal, 18)
     case .success(let words, let note):
       HStack(spacing: 8) {
         Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
@@ -384,6 +416,8 @@ struct IndicatorView: View {
           reason.map { "Saved to history and copied to clipboard — \($0)" }
             ?? "Saved to history and copied to clipboard")
           .font(.system(size: 12, weight: .medium))
+          .frame(maxWidth: 230, alignment: .leading)
+          .fixedSize(horizontal: false, vertical: true)
       }
     case .error(let message):
       HStack(spacing: 8) {
@@ -391,16 +425,17 @@ struct IndicatorView: View {
         Text(message)
           .font(.system(size: 12, weight: .medium))
           .lineLimit(2)
+          .frame(maxWidth: 240, alignment: .leading)
+          .fixedSize(horizontal: false, vertical: true)
       }
-      .padding(.horizontal, 14)
     case .downloading(let what, let percent):
       HStack(spacing: 10) {
         ProgressView(value: Double(percent), total: 100)
           .frame(width: 90)
         Text("Downloading \(what) · \(percent)%")
           .font(.system(size: 12, weight: .medium))
+          .lineLimit(1)
       }
-      .padding(.horizontal, 14)
     case .polishing(let style):
       HStack(spacing: 10) {
         ReactiveOrb(state: .solving, displaySize: 50)
@@ -413,7 +448,6 @@ struct IndicatorView: View {
             .lineLimit(1)
         }
       }
-      .padding(.horizontal, 18)
     }
   }
 
