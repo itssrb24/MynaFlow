@@ -144,8 +144,16 @@ final class IndicatorPanelController {
   func show() {
     hideTask?.cancel()
     hideTask = nil
+    let started = CACurrentMediaTime()
     position()
     panel.orderFrontRegardless()
+    let elapsed = CACurrentMediaTime() - started
+    // The budget from the hotkey edge to a visible pill is 100 ms for the
+    // whole path; if placing the window alone eats a fifth of it, say so.
+    if elapsed > 0.02 {
+      DiagnosticsLog.shared.write(
+        "warn", "app", "indicator placement took \(Int(elapsed * 1000)) ms")
+    }
   }
 
   /// Deferred orderOut so SwiftUI can animate the fade on its next pass.
@@ -162,6 +170,11 @@ final class IndicatorPanelController {
   /// focused window, else the one under the mouse, else main. `NSScreen.main`
   /// alone follows *our* key window, which a menu bar app rarely has.
   private func targetScreen() -> NSScreen? {
+    // With one display there is nothing to choose, and the AX round-trip
+    // below is a synchronous call into another process — on the hotkey path,
+    // where a busy app (Chrome, an Electron editor) can stall the pill for
+    // long enough to feel like lag. Skip it entirely.
+    guard NSScreen.screens.count > 1 else { return NSScreen.screens.first }
     if let application = NSWorkspace.shared.frontmostApplication,
       let rect = Self.focusedWindowFrame(of: application)
     {
@@ -178,6 +191,9 @@ final class IndicatorPanelController {
   /// Cocoa-space frame of the frontmost app's focused window via AX.
   private static func focusedWindowFrame(of application: NSRunningApplication) -> NSRect? {
     let element = AXUIElementCreateApplication(application.processIdentifier)
+    // Bound the wait: placing the pill on the right screen is a nicety, and
+    // never worth blocking its appearance for.
+    AXUIElementSetMessagingTimeout(element, 0.05)
     var windowRef: CFTypeRef?
     guard AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute as CFString, &windowRef) == .success,
       let windowRef, CFGetTypeID(windowRef) == AXUIElementGetTypeID()
@@ -216,19 +232,37 @@ final class IndicatorPanelController {
 
 // MARK: - View
 
+/// `NSVisualEffectView` in behind-window mode: the same blur AppKit gives its
+/// own HUDs. Pinned to the dark appearance regardless of the system theme,
+/// because the content drawn on it is always white.
+private struct GlassBackdrop: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSVisualEffectView {
+    let view = NSVisualEffectView()
+    view.material = .hudWindow
+    view.blendingMode = .behindWindow
+    view.state = .active
+    view.isEmphasized = false
+    view.appearance = NSAppearance(named: .darkAqua)
+    return view
+  }
+
+  func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
 struct IndicatorView: View {
   let model: IndicatorModel
 
   var body: some View {
     content
       .frame(width: 280, height: 78)
-      // The shade is allowed to spill into the window's transparent margin,
-      // so it fades to nothing in free space. Clipped to the content frame it
-      // would end mid-gradient and show as faint straight edges.
-      .background(shade.padding(-28))
-      .padding(30)
       .animation(.easeOut(duration: 0.15), value: model.display)
-      .opacity(model.display == .hidden ? 0 : 1)
+      .background(glass)
+      // Appearing should feel like the key press itself, so it pops in on a
+      // short spring rather than fading over 150 ms, which reads as lag.
+      .scaleEffect(isVisible ? 1 : 0.92)
+      .opacity(isVisible ? 1 : 0)
+      .animation(.spring(response: 0.22, dampingFraction: 0.76), value: isVisible)
+      .padding(30)
       .contentShape(Rectangle())
       .onTapGesture {
         if case .recording(.toggle) = model.display { model.onStopRequested() }
@@ -236,26 +270,64 @@ struct IndicatorView: View {
       }
   }
 
-  /// There is no panel: the orb floats straight on the desktop. It also
-  /// floats over white documents, though, where white dots and white text
-  /// would simply disappear — so this sits underneath. An elliptical gradient
-  /// with no hard edge reads as ambient shade rather than a box, which is the
-  /// whole point, while still giving the content something to be legible
-  /// against. Set `shadeStrength` to 0 for a completely bare orb.
-  private var shade: some View {
-    EllipticalGradient(
-      gradient: Gradient(stops: [
-        .init(color: .black.opacity(Self.shadeStrength), location: 0),
-        .init(color: .black.opacity(Self.shadeStrength * 0.62), location: 0.45),
-        .init(color: .black.opacity(Self.shadeStrength * 0.22), location: 0.75),
-        .init(color: .clear, location: 1),
-      ]),
-      center: .center, startRadiusFraction: 0, endRadiusFraction: 0.52
-    )
-    .allowsHitTesting(false)
+  private var isVisible: Bool { model.display != .hidden }
+
+  /// Real glass, not a dark rectangle: an `NSVisualEffectView` blurring
+  /// whatever is behind the window, held to a dark appearance so the white
+  /// orb and white text stay legible over a white page as well as a desktop.
+  ///
+  /// Edges are what sell it. A single blurred pane looks flat, so the shape
+  /// carries a light-to-dark hairline — brighter along the top where a real
+  /// bevel would catch the light — over an inner shadow that gives the glass
+  /// some thickness, and the whole thing sits on a soft tinted drop shadow.
+  private var glass: some View {
+    let shape = RoundedRectangle(cornerRadius: 26, style: .continuous)
+    return shape
+      .fill(Color.clear)
+      .background(GlassBackdrop().clipShape(shape))
+      // Smoked, not clear. The blur alone tracks whatever is behind it, so
+      // over a white page it comes back pale and the white orb washes out.
+      // This floor keeps the contrast constant wherever the pill lands, while
+      // still letting the background read through.
+      .overlay(shape.fill(Color.black.opacity(0.30)))
+      .overlay(shape.fill(tint))
+      .overlay(
+        shape
+          .stroke(Color.black.opacity(0.35), lineWidth: 2)
+          .blur(radius: 2)
+          .mask(shape.fill(LinearGradient(
+            colors: [.clear, .black], startPoint: .top, endPoint: .bottom))))
+      .overlay(
+        shape.strokeBorder(
+          LinearGradient(
+            colors: [.white.opacity(0.30), .white.opacity(0.10), .white.opacity(0.04)],
+            startPoint: .top, endPoint: .bottom),
+          lineWidth: 1))
+      .shadow(color: Color.black.opacity(0.30), radius: 18, y: 8)
+      .allowsHitTesting(false)
   }
 
-  private static let shadeStrength: Double = 0.62
+  /// The glass picks up a wash of colour from whatever is happening, and
+  /// while you are speaking it breathes with your voice. Kept desaturated and
+  ///low in opacity: a tint, not a colour cast.
+  private var tint: Color {
+    switch model.display {
+    case .recording(.hold):
+      return Theme.Colors.accent.opacity(0.05 + 0.15 * model.orbLevel)
+    case .recording(.toggle):
+      return Color.orange.opacity(0.08 + 0.14 * model.orbLevel)
+    case .processing:
+      return Theme.Colors.accent.opacity(0.06)
+    case .polishing:
+      return Theme.Colors.accent.opacity(0.08)
+    case .error:
+      return Color.red.opacity(0.13)
+    case .success, .clipboardFallback:
+      return Color.green.opacity(0.10)
+    case .downloading, .hidden:
+      return Color.clear
+    }
+  }
 
   @ViewBuilder
   private var content: some View {
