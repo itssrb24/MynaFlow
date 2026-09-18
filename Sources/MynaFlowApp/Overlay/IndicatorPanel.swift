@@ -291,75 +291,91 @@ struct IndicatorView: View {
       ? .easeOut(duration: 0.12) : .spring(response: 0.34, dampingFraction: 0.9)
   }
 
-  /// Real glass, not a dark rectangle: an `NSVisualEffectView` blurring
-  /// whatever is behind the window, held to a dark appearance so the white
-  /// orb and white text stay legible over a white page as well as a desktop.
+  /// Real glass: an `NSVisualEffectView` blurring whatever is behind the
+  /// window, then coloured rather than darkened.
   ///
-  /// Edges are what sell it. A single blurred pane looks flat, so the shape
-  /// carries a light-to-dark hairline — brighter along the top where a real
-  /// bevel would catch the light — over an inner shadow that gives the glass
-  /// some thickness, and the whole thing sits on a soft tinted drop shadow.
+  /// Nothing here is black. A pane held back with black loses its hue and
+  /// reads as a smoked chip; the same luminance carried by a deep version of
+  /// the state's own colour reads as tinted glass you can see through. So the
+  /// veil, the tint and even the shadow all come from one hue per state.
+  ///
+  /// Edges are what sell it: a light-catching hairline, brighter along the
+  /// top, over an inner shadow that gives the pane thickness, under a sheen
+  /// as if it were lit from above.
   private var glass: some View {
     let shape = RoundedRectangle(cornerRadius: 26, style: .continuous)
-    return shape
-      .fill(Color.clear)
+    let palette = self.palette
+    let tint = LinearGradient(
+      colors: [
+        palette.tint.opacity(palette.tintOpacity),
+        palette.tint.opacity(palette.tintOpacity * 0.45),
+        palette.tint.opacity(palette.tintOpacity * 0.70),
+      ],
+      startPoint: .topLeading, endPoint: .bottomTrailing)
+    let sheen = LinearGradient(
+      colors: [.white.opacity(0.20), .white.opacity(0.05), .clear],
+      startPoint: .top, endPoint: .center)
+    let rim = LinearGradient(
+      colors: [.white.opacity(0.45), .white.opacity(0.13), .white.opacity(0.06)],
+      startPoint: .top, endPoint: .bottom)
+    let innerMask = LinearGradient(
+      colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+
+    let blurred = shape.fill(Color.clear)
       .background(GlassBackdrop().clipShape(shape))
-      // Just enough smoke to hold white content against a white page. Most of
-      // the density comes from the tint above it rather than from black,
-      // which is what keeps it reading as coloured glass and not a dark chip.
-      .overlay(shape.fill(Color.black.opacity(0.16)))
-      .overlay(shape.fill(tint))
-      // A sheen along the top, as if the pane were catching light from above.
-      .overlay(
-        shape.fill(
-          LinearGradient(
-            colors: [.white.opacity(0.14), .white.opacity(0.03), .clear],
-            startPoint: .top, endPoint: .center)))
-      .overlay(
-        shape
-          .stroke(Color.black.opacity(0.35), lineWidth: 2)
-          .blur(radius: 2)
-          .mask(shape.fill(LinearGradient(
-            colors: [.clear, .black], startPoint: .top, endPoint: .bottom))))
-      .overlay(
-        shape.strokeBorder(
-          LinearGradient(
-            colors: [.white.opacity(0.30), .white.opacity(0.10), .white.opacity(0.04)],
-            startPoint: .top, endPoint: .bottom),
-          lineWidth: 1))
-      .shadow(color: Color.black.opacity(0.30), radius: 18, y: 8)
+    let veiled = blurred.overlay(shape.fill(palette.deep.opacity(palette.deepOpacity)))
+    let tinted = veiled.overlay(shape.fill(tint))
+    let lit = tinted.overlay(shape.fill(sheen))
+    let thick = lit.overlay(
+      shape.stroke(palette.deep.opacity(0.45), lineWidth: 2)
+        .blur(radius: 2)
+        .mask(shape.fill(innerMask)))
+    return thick
+      .overlay(shape.strokeBorder(rim, lineWidth: 1))
+      .shadow(color: palette.deep.opacity(0.38), radius: 18, y: 8)
       .allowsHitTesting(false)
   }
 
-  /// The glass takes its colour from whatever is happening, and while you
-  /// are speaking it breathes with your voice. A gradient rather than a flat
-  /// wash: colour pooling towards the top edge is what separates glass from a
-  /// coloured rectangle. Kept desaturated — a tint, not a colour cast.
-  private var tint: some ShapeStyle {
-    let base = tintColor
-    return LinearGradient(
-      colors: [base.opacity(1), base.opacity(0.55), base.opacity(0.75)],
-      startPoint: .topLeading, endPoint: .bottomTrailing)
+  /// One hue per state, in two strengths: a deep version that holds white
+  /// content against a white page, and a bright one that colours the pane.
+  /// While you are speaking, your voice drives the bright one.
+  private struct GlassPalette {
+    var deep: Color
+    var deepOpacity: Double
+    var tint: Color
+    var tintOpacity: Double
   }
 
-  private var tintColor: Color {
+  private var palette: GlassPalette {
+    // Warm umber and amber: the app's brass accent taken to both ends.
+    let umber = Color(red: 0.13, green: 0.095, blue: 0.055)
+    let amber = Color(red: 0.98, green: 0.74, blue: 0.36)
     switch model.display {
     case .recording(.hold):
-      return Theme.Colors.accent.opacity(0.13 + 0.22 * model.orbLevel)
+      return GlassPalette(
+        deep: umber, deepOpacity: 0.14, tint: amber,
+        tintOpacity: 0.34 + 0.18 * model.orbLevel)
     case .recording(.toggle):
-      return Color.orange.opacity(0.16 + 0.20 * model.orbLevel)
+      return GlassPalette(
+        deep: Color(red: 0.17, green: 0.085, blue: 0.030), deepOpacity: 0.14,
+        tint: Color(red: 1.0, green: 0.62, blue: 0.26),
+        tintOpacity: 0.38 + 0.16 * model.orbLevel)
     case .processing:
-      return Theme.Colors.accent.opacity(0.15)
+      return GlassPalette(deep: umber, deepOpacity: 0.14, tint: amber, tintOpacity: 0.34)
     case .polishing:
-      return Theme.Colors.accent.opacity(0.18)
+      return GlassPalette(deep: umber, deepOpacity: 0.14, tint: amber, tintOpacity: 0.40)
     case .error:
-      return Color.red.opacity(0.22)
+      return GlassPalette(
+        deep: Color(red: 0.17, green: 0.055, blue: 0.045), deepOpacity: 0.16,
+        tint: Color(red: 1.0, green: 0.44, blue: 0.38), tintOpacity: 0.42)
     case .success, .clipboardFallback:
-      return Color.green.opacity(0.17)
+      return GlassPalette(
+        deep: Color(red: 0.055, green: 0.135, blue: 0.085), deepOpacity: 0.14,
+        tint: Color(red: 0.46, green: 0.93, blue: 0.62), tintOpacity: 0.34)
     case .downloading:
-      return Theme.Colors.accent.opacity(0.12)
+      return GlassPalette(deep: umber, deepOpacity: 0.12, tint: amber, tintOpacity: 0.28)
     case .hidden:
-      return Color.clear
+      return GlassPalette(deep: umber, deepOpacity: 0, tint: amber, tintOpacity: 0)
     }
   }
 
