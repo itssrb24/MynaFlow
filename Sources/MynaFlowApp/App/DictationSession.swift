@@ -87,12 +87,16 @@ final class DictationSession {
     case .stopCapture:
       stopElapsedTimer()
       capture.stop()
+      // stop() cancels the level poll before it can deliver its zero, so
+      // without this the orb would freeze mid-swell through transcription.
+      indicator.resetAudioLevel()
       if soundFeedback { NSSound(named: "Pop")?.play() }
     case .cancelController:
       frameCollector?.cancel()
       frameCollector = nil
       stopElapsedTimer()
       capture.stop()
+      indicator.resetAudioLevel()
       if let controller { Task { await controller.cancelDictation() } }
     case .armAutoStop:
       autoStop?.cancel()
@@ -140,7 +144,7 @@ final class DictationSession {
     // The indicator appears on the hotkey edge — the <100 ms budget — before
     // any async work.
     indicator.display = .recording(mode: mode == .hold ? .hold : .toggle)
-    indicator.audioLevel = 0
+    indicator.resetAudioLevel()
     indicator.elapsedSeconds = 0
     indicatorPanel?.show()
 
@@ -167,7 +171,8 @@ final class DictationSession {
         "dictation-\(UUID().uuidString).wav", isDirectory: false)
       let writer = try StreamingWaveWriter(url: wavURL, outputSampleRate: 16_000)
       let frames = try capture.start { [weak self] level in
-        self?.indicator.audioLevel = level
+        // Smoothed for the orb; the controller still gets the raw value.
+        self?.indicator.submitAudioLevel(level)
         Task { await controller.updateAudioLevel(level) }
       }
       startElapsedTimer()

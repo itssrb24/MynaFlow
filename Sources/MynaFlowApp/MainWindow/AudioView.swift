@@ -3,6 +3,7 @@ import SwiftUI
 struct AudioView: View {
   let coordinator: AppCoordinator
   @State private var fillerText = ""
+  @State private var showingAcknowledgements = false
 
   var body: some View {
     Page(title: "Audio & General", subtitle: "Microphone, cleanup, and startup.") {
@@ -128,6 +129,35 @@ struct AudioView: View {
         .disabled(!coordinator.diagnosticsAvailable)
       }
       .raised()
+
+      VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+        SectionLabel(text: "Acknowledgements")
+        HStack(spacing: Theme.Spacing.sm) {
+          Text("The animated orbs are Thinking Orbs by Jakub Antalik.")
+            .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
+          Button("MIT licence") { showingAcknowledgements = true }
+            .buttonStyle(NeuButtonStyle())
+            .font(Theme.Fonts.caption)
+        }
+      }
+      .raised()
+    }
+    .sheet(isPresented: $showingAcknowledgements) {
+      VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+        Text("Thinking Orbs").font(Theme.Fonts.display).foregroundStyle(Theme.Colors.textPrimary)
+        ScrollView {
+          Text(AcknowledgementsText.thinkingOrbs)
+            .font(Theme.Fonts.mono)
+            .foregroundStyle(Theme.Colors.textSecondary)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        Button("Done") { showingAcknowledgements = false }
+          .buttonStyle(NeuButtonStyle(prominent: true))
+      }
+      .padding(Theme.Spacing.xl)
+      .frame(width: 520, height: 420)
+      .background(Theme.Colors.base)
     }
     .task { fillerText = coordinator.userFillers.joined(separator: ", ") }
   }

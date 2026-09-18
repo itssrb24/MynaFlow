@@ -26,10 +26,25 @@ let package = Package(
                 .linkedFramework("Speech"),
             ]
         ),
+        .target(
+            name: "ThinkingOrbsKit",
+            // Vendored verbatim from libraries.dev thinking-orbs (MIT, spec 1.0.0
+            // · thinking-orbs 0.3.1). Never hand-edit these files: see
+            // Sources/ThinkingOrbsKit/UPSTREAM.md before touching anything here.
+            exclude: ["LICENSE", "UPSTREAM.md"],
+            // Upstream is tools-version 5.9. Pinning v5 keeps these files
+            // compiling unchanged across future re-syncs rather than chasing
+            // strict-concurrency diagnostics in code we must not edit. They do
+            // pass Swift 6 today; this is insurance. MynaFlowApp still gets
+            // full checking at the boundary — the public surface is Sendable.
+            swiftSettings: [.swiftLanguageMode(.v5)],
+            linkerSettings: [.linkedFramework("SwiftUI")]
+        ),
         .executableTarget(
             name: "MynaFlowApp",
             dependencies: [
                 "MynaFlowCore",
+                "ThinkingOrbsKit",
                 .product(name: "FluidAudio", package: "FluidAudio"),
             ],
             exclude: ["Resources"],
@@ -42,6 +57,12 @@ let package = Package(
         .testTarget(
             name: "MynaFlowCoreTests",
             dependencies: ["MynaFlowCore"]
+        ),
+        // The re-sync canary: these assert the facts about the vendored orb
+        // library that the indicator's reactive drawing depends on.
+        .testTarget(
+            name: "ThinkingOrbsBridgeTests",
+            dependencies: ["ThinkingOrbsKit", "MynaFlowCore"]
         ),
     ]
 )

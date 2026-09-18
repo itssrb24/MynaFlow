@@ -1,6 +1,9 @@
 import AppKit
 import ApplicationServices
+import MynaFlowCore
+import QuartzCore
 import SwiftUI
+import ThinkingOrbsKit
 
 /// What the floating indicator is currently saying.
 enum IndicatorDisplay: Equatable {
@@ -26,12 +29,36 @@ enum IndicatorDisplay: Equatable {
 @Observable
 final class IndicatorModel {
   var display: IndicatorDisplay = .hidden
-  var audioLevel: Float = 0
+  /// Raw level from the capture tap, 0...1.
+  private(set) var audioLevel: Float = 0
+  /// Smoothed level the orb reads. Assigned only through `submitAudioLevel`.
+  private(set) var orbLevel: Double = AudioLevelEnvelope().output
   var elapsedSeconds: Int = 0
   /// Clicking the pill during a toggle session stops it.
   var onStopRequested: () -> Void = {}
   /// Clicking an error pill that offers a fix (e.g. open System Settings).
   var onErrorAction: (() -> Void)?
+
+  @ObservationIgnored private var envelope = AudioLevelEnvelope()
+  @ObservationIgnored private var lastLevelStamp: CFTimeInterval?
+
+  /// The tap's raw RMS is far too jumpy to move geometry with, so the orb
+  /// reads an envelope of it. The elapsed time is measured rather than
+  /// assumed: the level poll is a sleep loop that drifts under load.
+  func submitAudioLevel(_ level: Float) {
+    let now = CACurrentMediaTime()
+    let delta = lastLevelStamp.map { now - $0 } ?? 1.0 / 60
+    lastLevelStamp = now
+    audioLevel = level
+    orbLevel = envelope.update(level: Double(level), deltaTime: delta)
+  }
+
+  func resetAudioLevel() {
+    envelope.reset()
+    lastLevelStamp = nil
+    audioLevel = 0
+    orbLevel = envelope.output
+  }
 }
 
 /// An NSPanel that goes exactly where it is put. AppKit constrains ordinary
@@ -220,8 +247,8 @@ struct IndicatorView: View {
     case .hidden:
       EmptyView()
     case .recording(let mode):
-      HStack(spacing: 12) {
-        LevelMeter(level: model.audioLevel)
+      HStack(spacing: 10) {
+        ReactiveOrb(state: .composing, level: model.orbLevel)
         VStack(alignment: .leading, spacing: 2) {
           Text(mode == .hold ? "Listening" : "Listening — toggle")
             .font(.system(size: 13, weight: .semibold))
@@ -239,10 +266,13 @@ struct IndicatorView: View {
       .padding(.horizontal, 18)
     case .processing(let engine):
       HStack(spacing: 10) {
-        ProgressView().controlSize(.small)
+        ReactiveOrb(state: .working)
         Text("Transcribing — \(engine)")
           .font(.system(size: 13, weight: .medium))
+          .lineLimit(1)
+          .minimumScaleFactor(0.9)
       }
+      .padding(.horizontal, 18)
     case .success(let words, let note):
       HStack(spacing: 8) {
         Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
@@ -280,10 +310,13 @@ struct IndicatorView: View {
       .padding(.horizontal, 14)
     case .polishing(let style):
       HStack(spacing: 10) {
-        ProgressView().controlSize(.small)
+        ReactiveOrb(state: .solving)
         Text("Polishing — \(style)")
           .font(.system(size: 13, weight: .medium))
+          .lineLimit(1)
+          .minimumScaleFactor(0.9)
       }
+      .padding(.horizontal, 18)
     }
   }
 
@@ -292,26 +325,3 @@ struct IndicatorView: View {
   }
 }
 
-/// Live input level, drawn as a small bar cluster that responds to the
-/// actual RMS level — informative, not decorative.
-private struct LevelMeter: View {
-  let level: Float
-
-  var body: some View {
-    HStack(spacing: 3) {
-      ForEach(0..<5, id: \.self) { index in
-        RoundedRectangle(cornerRadius: 1.5)
-          .fill(Color.accentColor)
-          .frame(width: 3, height: barHeight(index))
-      }
-    }
-    .frame(width: 30, height: 28)
-    .animation(.linear(duration: 0.05), value: level)
-  }
-
-  private func barHeight(_ index: Int) -> CGFloat {
-    let weights: [Float] = [0.5, 0.8, 1.0, 0.8, 0.5]
-    let scaled = CGFloat(min(1, level * 1.4) * weights[index])
-    return max(4, 26 * scaled)
-  }
-}

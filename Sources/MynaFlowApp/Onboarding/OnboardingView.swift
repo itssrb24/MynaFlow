@@ -1,6 +1,8 @@
 import AVFoundation
 import MynaFlowCore
+import QuartzCore
 import SwiftUI
+import ThinkingOrbsKit
 
 /// First run → first successful dictation, under 90 seconds. Eight steps,
 /// each one thing; step 8 is not optional.
@@ -8,7 +10,9 @@ struct OnboardingView: View {
   let coordinator: AppCoordinator
   @Environment(\.dismissWindow) private var dismissWindow
   @State private var step = 0
-  @State private var previewLevel: Float = 0
+  @State private var previewEnvelope = AudioLevelEnvelope()
+  @State private var previewOrbLevel = AudioLevelEnvelope().output
+  @State private var previewStamp: CFTimeInterval?
   @State private var testText = ""
   @State private var testResult: String?
   @State private var typingWPMText = "40"
@@ -33,7 +37,14 @@ struct OnboardingView: View {
     .preferredColorScheme(.dark)
     .onChange(of: step) { _, newValue in
       coordinator.stopLevelPreview()
-      if newValue == 1 { coordinator.startLevelPreview { previewLevel = $0 } }
+      if newValue == 1 {
+        coordinator.startLevelPreview { level in
+          let now = CACurrentMediaTime()
+          let delta = previewStamp.map { now - $0 } ?? 1.0 / 60
+          previewStamp = now
+          previewOrbLevel = previewEnvelope.update(level: Double(level), deltaTime: delta)
+        }
+      }
       if newValue == 7 { dictationCountAtStart = coordinator.recentDictations.count }
     }
     .onDisappear { coordinator.stopLevelPreview() }
@@ -64,8 +75,8 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: Theme.Spacing.md) {
           if coordinator.microphoneGranted {
             HStack(spacing: Theme.Spacing.md) {
-              PreviewMeter(level: previewLevel)
-              Text("Say something — the meter should move.")
+              ReactiveOrb(state: .composing, level: previewOrbLevel)
+              Text("Say something — the orb should answer. This is what you'll see while dictating.")
                 .font(Theme.Fonts.body).foregroundStyle(Theme.Colors.textSecondary)
             }
           } else {
@@ -264,20 +275,5 @@ struct OnboardingView: View {
         coordinator.updateHotkey(action, shortcut: captured)
       }
     }
-  }
-}
-
-private struct PreviewMeter: View {
-  let level: Float
-
-  var body: some View {
-    HStack(spacing: 4) {
-      ForEach(0..<12, id: \.self) { index in
-        RoundedRectangle(cornerRadius: 2)
-          .fill(Float(index) / 12 < min(1, level * 1.5) ? Theme.Colors.accent : Theme.Colors.surface)
-          .frame(width: 8, height: 28)
-      }
-    }
-    .animation(.linear(duration: 0.05), value: level)
   }
 }
