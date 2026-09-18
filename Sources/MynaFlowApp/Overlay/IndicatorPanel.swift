@@ -29,10 +29,10 @@ enum IndicatorDisplay: Equatable {
 @Observable
 final class IndicatorModel {
   var display: IndicatorDisplay = .hidden
-  /// Raw level from the capture tap, 0...1.
-  private(set) var audioLevel: Float = 0
   /// Smoothed level the orb reads. Assigned only through `submitAudioLevel`.
   private(set) var orbLevel: Double = AudioLevelEnvelope().output
+  /// Orb-time, which advances only while there is sound.
+  private(set) var orbPhase: Double = 0
   var elapsedSeconds: Int = 0
   /// Clicking the pill during a toggle session stops it.
   var onStopRequested: () -> Void = {}
@@ -40,24 +40,34 @@ final class IndicatorModel {
   var onErrorAction: (() -> Void)?
 
   @ObservationIgnored private var envelope = AudioLevelEnvelope()
+  @ObservationIgnored private var motion = OrbMotionClock()
   @ObservationIgnored private var lastLevelStamp: CFTimeInterval?
 
   /// The tap's raw RMS is far too jumpy to move geometry with, so the orb
   /// reads an envelope of it. The elapsed time is measured rather than
   /// assumed: the level poll is a sleep loop that drifts under load.
+  ///
+  /// Both properties are written only when they actually change. The poll
+  /// keeps arriving 60 times a second through silence, and publishing an
+  /// unchanged value would redraw the orb for nothing — the stillness has to
+  /// reach all the way down, not just look still.
   func submitAudioLevel(_ level: Float) {
     let now = CACurrentMediaTime()
     let delta = lastLevelStamp.map { now - $0 } ?? 1.0 / 60
     lastLevelStamp = now
-    audioLevel = level
-    orbLevel = envelope.update(level: Double(level), deltaTime: delta)
+
+    let smoothed = envelope.update(level: Double(level), deltaTime: delta)
+    if abs(smoothed - orbLevel) > 0.001 { orbLevel = smoothed }
+    let advanced = motion.advance(level: smoothed, deltaTime: delta)
+    if advanced != orbPhase { orbPhase = advanced }
   }
 
   func resetAudioLevel() {
     envelope.reset()
+    motion.reset()
     lastLevelStamp = nil
-    audioLevel = 0
     orbLevel = envelope.output
+    orbPhase = 0
   }
 }
 
@@ -248,7 +258,7 @@ struct IndicatorView: View {
       EmptyView()
     case .recording(let mode):
       HStack(spacing: 10) {
-        ReactiveOrb(state: .composing, level: model.orbLevel)
+        ReactiveOrb(state: .composing, level: model.orbLevel, phase: model.orbPhase)
         VStack(alignment: .leading, spacing: 2) {
           Text(mode == .hold ? "Listening" : "Listening — toggle")
             .font(.system(size: 13, weight: .semibold))
@@ -266,11 +276,15 @@ struct IndicatorView: View {
       .padding(.horizontal, 18)
     case .processing(let engine):
       HStack(spacing: 10) {
-        ReactiveOrb(state: .working)
-        Text("Transcribing — \(engine)")
-          .font(.system(size: 13, weight: .medium))
-          .lineLimit(1)
-          .minimumScaleFactor(0.9)
+        ReactiveOrb(state: .working, displaySize: 44)
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Transcribing")
+            .font(.system(size: 13, weight: .semibold))
+          Text(engine)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
       }
       .padding(.horizontal, 18)
     case .success(let words, let note):
@@ -310,11 +324,15 @@ struct IndicatorView: View {
       .padding(.horizontal, 14)
     case .polishing(let style):
       HStack(spacing: 10) {
-        ReactiveOrb(state: .solving)
-        Text("Polishing — \(style)")
-          .font(.system(size: 13, weight: .medium))
-          .lineLimit(1)
-          .minimumScaleFactor(0.9)
+        ReactiveOrb(state: .solving, displaySize: 44)
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Polishing")
+            .font(.system(size: 13, weight: .semibold))
+          Text(style)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
       }
       .padding(.horizontal, 18)
     }

@@ -11,7 +11,9 @@ struct OnboardingView: View {
   @Environment(\.dismissWindow) private var dismissWindow
   @State private var step = 0
   @State private var previewEnvelope = AudioLevelEnvelope()
+  @State private var previewMotion = OrbMotionClock()
   @State private var previewOrbLevel = AudioLevelEnvelope().output
+  @State private var previewOrbPhase: Double = 0
   @State private var previewStamp: CFTimeInterval?
   @State private var testText = ""
   @State private var testResult: String?
@@ -43,6 +45,7 @@ struct OnboardingView: View {
           let delta = previewStamp.map { now - $0 } ?? 1.0 / 60
           previewStamp = now
           previewOrbLevel = previewEnvelope.update(level: Double(level), deltaTime: delta)
+          previewOrbPhase = previewMotion.advance(level: previewOrbLevel, deltaTime: delta)
         }
       }
       if newValue == 7 { dictationCountAtStart = coordinator.recentDictations.count }
@@ -75,7 +78,8 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: Theme.Spacing.md) {
           if coordinator.microphoneGranted {
             HStack(spacing: Theme.Spacing.md) {
-              ReactiveOrb(state: .composing, level: previewOrbLevel)
+              ReactiveOrb(
+                state: .composing, level: previewOrbLevel, phase: previewOrbPhase)
               Text("Say something — the orb should answer. This is what you'll see while dictating.")
                 .font(Theme.Fonts.body).foregroundStyle(Theme.Colors.textSecondary)
             }

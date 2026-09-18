@@ -35,9 +35,22 @@ struct OrbLevelModulationTests {
     #expect(ghost.alpha == 0.32, "the ghost keeps its alpha")
     #expect(sash.r > 0.5)
     #expect(sash.alpha > 0.40)
-    // The ghost still drifts, just far less than the sash.
-    #expect(ghost.x - center < sash.x - center)
-    #expect(ghost.x > 40)
+    // The whole orb scales; on top of that the sash pushes further out.
+    #expect(sash.x - center > ghost.x - center)
+  }
+
+  @Test("The orb collapses in silence and expands with the voice")
+  func expandAndCollapse() {
+    #expect(modulation.orbScale(level: 0) == modulation.collapsedScale)
+    #expect(modulation.orbScale(level: 1) == modulation.expandedScale)
+    #expect(modulation.orbScale(level: 0.5) > modulation.orbScale(level: 0.2))
+    // Dramatic enough to read as a gesture, not a nudge.
+    #expect(modulation.orbScale(level: 1) / modulation.orbScale(level: 0) > 1.5)
+    // Never larger than the space it is given, so it cannot overrun the pill.
+    #expect(modulation.orbScale(level: 1) <= 1)
+    #expect(modulation.orbScale(level: 4) == modulation.expandedScale)
+    #expect(modulation.orbScale(level: -2) == modulation.collapsedScale)
+    #expect(modulation.orbScale(level: .nan) == modulation.collapsedScale)
   }
 
   @Test("Displacement is purely radial")
@@ -89,15 +102,16 @@ struct OrbLevelModulationTests {
     #expect(notANumber.r == 0.6)
   }
 
-  @Test("At full level the swell still fits inside the orb's own bounds")
+  @Test("At full level, fully expanded, the orb still fits its frame")
   func staysInsideTheFrame() {
     // composing@px64: the sash rides a sphere of radius size/2 * 0.78 and the
-    // widest dot is ~1.3pt. If a gain is raised too far the orb clips its frame.
+    // widest dot is ~1.3pt. Raising a gain too far would clip the pill.
     let size = 64.0
     let sphereRadius = size / 2 * 0.78
     let widestDot = 1.3
-    let farthest = sphereRadius * (1 + modulation.sashRadialGain) + widestDot
-      * (1 + modulation.sashRadiusGain)
+    let farthest = modulation.orbScale(level: 1)
+      * (sphereRadius * (1 + modulation.sashRadialGain)
+        + widestDot * (1 + modulation.sashRadiusGain))
     #expect(farthest <= size / 2)
   }
 }
