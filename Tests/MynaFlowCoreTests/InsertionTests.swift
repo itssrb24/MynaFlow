@@ -77,4 +77,28 @@ struct InsertionPlannerTests {
       isSecureField: isSecureField)
     #expect(plan == expected)
   }
+
+  @Test("Blind paste is opt-in, and never overrides a field we can actually see")
+  func blindPaste() {
+    // The Google Docs case: nothing focused that we can see, user opted in.
+    #expect(
+      InsertionPlanner.plan(
+        accessibilityGranted: true, hasFocusedElement: false, isSecureField: false,
+        allowBlindPaste: true) == .blindPaste)
+    // Same situation without the opt-in stays fail-closed.
+    #expect(
+      InsertionPlanner.plan(
+        accessibilityGranted: true, hasFocusedElement: false, isSecureField: false,
+        allowBlindPaste: false) == .historyPlusClipboard)
+    // A visible secure field still wins over the opt-in.
+    #expect(
+      InsertionPlanner.plan(
+        accessibilityGranted: true, hasFocusedElement: true, isSecureField: true,
+        allowBlindPaste: true) == .refuseSecureField)
+    // No Accessibility means no synthesized keystrokes either.
+    #expect(
+      InsertionPlanner.plan(
+        accessibilityGranted: false, hasFocusedElement: false, isSecureField: false,
+        allowBlindPaste: true) == .historyPlusClipboard)
+  }
 }

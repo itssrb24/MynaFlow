@@ -9,7 +9,7 @@ struct AppRulesView: View {
   @State private var bundleIDs: [String] = []
 
   var body: some View {
-    Page(title: "Apps", subtitle: "Dictate differently per app: skip cleanup, drop the trailing period, or rewrite in a style automatically.") {
+    Page(title: "Apps", subtitle: "Dictate differently per app: skip cleanup, drop the trailing period, rewrite in a style, or paste into editors Accessibility cannot see.") {
       if bundleIDs.isEmpty {
         Text("Apps appear here after you dictate into them.")
           .font(Theme.Fonts.body).foregroundStyle(Theme.Colors.textTertiary)
@@ -26,8 +26,12 @@ struct AppRulesView: View {
             ) { coordinator.saveAppRule($0) }
           }
         }
-        Text("Auto-polish runs the local model on every dictation into that app, adding a few seconds. If the model is unavailable the cleaned text is inserted as-is.")
-          .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+          Text("Auto-polish runs the local model on every dictation into that app, adding a few seconds. If the model is unavailable the cleaned text is inserted as-is.")
+          Text("Paste turns on pasting for apps that hide their text field from Accessibility — Google Docs draws its page on a canvas, so nothing else reaches it. Myna Flow cannot check an invisible field for being a password field, so leave this off for apps where you type passwords.")
+        }
+        .font(Theme.Fonts.caption)
+        .foregroundStyle(Theme.Colors.textTertiary)
       }
     }
     .task { await reload() }
@@ -62,6 +66,11 @@ private struct AppRuleRow: View {
       TriStatePicker(label: "Period", value: rule.terminalPeriod) { changed in
         var updated = rule
         updated.terminalPeriod = changed
+        save(updated)
+      }
+      TriStatePicker(label: "Paste", value: rule.pasteWhenUnseen) { changed in
+        var updated = rule
+        updated.pasteWhenUnseen = changed
         save(updated)
       }
       Picker("Auto-polish", selection: Binding(

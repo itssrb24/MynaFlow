@@ -42,13 +42,19 @@ public actor FlowStore {
 
   public func appRules() throws -> [AppRule] {
     try query(
-      "SELECT bundle_id, cleanup_enabled, terminal_period, polish_style_id FROM app_rules ORDER BY bundle_id",
+      """
+      SELECT bundle_id, cleanup_enabled, terminal_period, polish_style_id, paste_when_unseen
+      FROM app_rules ORDER BY bundle_id
+      """,
       bind: { _ in }, row: readAppRule)
   }
 
   public func appRule(for bundleID: String) throws -> AppRule? {
     try query(
-      "SELECT bundle_id, cleanup_enabled, terminal_period, polish_style_id FROM app_rules WHERE bundle_id = ?1",
+      """
+      SELECT bundle_id, cleanup_enabled, terminal_period, polish_style_id, paste_when_unseen
+      FROM app_rules WHERE bundle_id = ?1
+      """,
       bind: { sqlite3_bind_text($0, 1, bundleID, -1, sqliteTransient) }, row: readAppRule
     ).first
   }
@@ -61,12 +67,14 @@ public actor FlowStore {
     }
     try run(
       """
-      INSERT INTO app_rules (bundle_id, cleanup_enabled, terminal_period, polish_style_id, updated_at)
-      VALUES (?1, ?2, ?3, ?4, ?5)
+      INSERT INTO app_rules (
+        bundle_id, cleanup_enabled, terminal_period, polish_style_id, updated_at, paste_when_unseen)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6)
       ON CONFLICT(bundle_id) DO UPDATE SET
         cleanup_enabled = excluded.cleanup_enabled,
         terminal_period = excluded.terminal_period,
         polish_style_id = excluded.polish_style_id,
+        paste_when_unseen = excluded.paste_when_unseen,
         updated_at = excluded.updated_at
       """,
       bind: { statement in
@@ -75,6 +83,7 @@ public actor FlowStore {
         bindOptionalBool(statement, 3, rule.terminalPeriod)
         bindOptionalText(statement, 4, rule.polishStyleID?.uuidString)
         sqlite3_bind_double(statement, 5, Date().timeIntervalSince1970)
+        bindOptionalBool(statement, 6, rule.pasteWhenUnseen)
       })
   }
 
@@ -101,7 +110,8 @@ public actor FlowStore {
       bundleID: columnText(statement, 0) ?? "",
       cleanupEnabled: columnOptionalBool(statement, 1),
       terminalPeriod: columnOptionalBool(statement, 2),
-      polishStyleID: columnText(statement, 3).flatMap(UUID.init(uuidString:)))
+      polishStyleID: columnText(statement, 3).flatMap(UUID.init(uuidString:)),
+      pasteWhenUnseen: columnOptionalBool(statement, 4))
   }
 
   // MARK: - Dictations
@@ -745,7 +755,7 @@ public actor FlowStore {
     [
       "ALTER TABLE dictations ADD COLUMN insertion_diagnostics TEXT"
     ],
-    // v5: per-app rules. Deleting a style clears the rules that used it.
+    // v6 is appended below; v5: per-app rules.
     [
       """
       CREATE TABLE app_rules (
@@ -756,6 +766,10 @@ public actor FlowStore {
         updated_at REAL NOT NULL
       )
       """
+    ],
+    // v6: opt-in pasting for apps whose text field Accessibility cannot see.
+    [
+      "ALTER TABLE app_rules ADD COLUMN paste_when_unseen INTEGER"
     ],
   ]
 

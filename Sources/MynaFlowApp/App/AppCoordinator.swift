@@ -289,8 +289,10 @@ final class AppCoordinator {
       dependencies: DictationDependencies(
         captureTarget: { await MainActor.run { inserter.captureTarget() } },
         clearTarget: { await MainActor.run { inserter.clearTarget() } },
-        insert: { text in
-          try await inserter.insert(text, replacingSelection: false, pressEnter: false)
+        insert: { text, allowBlindPaste in
+          try await inserter.insert(
+            text, replacingSelection: false, pressEnter: false,
+            allowBlindPaste: allowBlindPaste)
         },
         copyToClipboard: { text in
           await MainActor.run { PasteboardHygiene.write(text) }
@@ -1031,7 +1033,10 @@ final class AppCoordinator {
       target.activate()
       try? await Task.sleep(for: .milliseconds(300))
       inserter.captureTarget()
-      let result = try? await inserter.insert(text, replacingSelection: false, pressEnter: false)
+      // The user pointed at this app and clicked Paste, so a field we cannot
+      // see is not a reason to refuse — that is what makes Google Docs work.
+      let result = try? await inserter.insert(
+        text, replacingSelection: false, pressEnter: false, allowBlindPaste: true)
       inserter.clearTarget()
       switch result {
       case .inserted, .replacedSelection, .pastedFromClipboard:

@@ -95,7 +95,7 @@ private func makeController(
     dependencies: DictationDependencies(
       captureTarget: { "com.apple.TextEdit" },
       clearTarget: { recorder.recordClear() },
-      insert: { text in
+      insert: { text, _ in
         recorder.recordInsert(text)
         return try insertOutcome(text)
       },
@@ -337,7 +337,7 @@ struct DictationControllerTests {
         dependencies: DictationDependencies(
           captureTarget: { nil },
           clearTarget: {},
-          insert: { _ in .inserted },
+          insert: { _, _ in .inserted },
           copyToClipboard: { _ in true }))
       _ = await controller.startDictation(mode: .hold)
       await controller.finishRecording(frames: someFrames())
@@ -411,7 +411,7 @@ struct DictationControllerTests {
       engine: engine, cleaner: TranscriptCleaner(), store: store, scratchDirectory: scratch,
       dependencies: DictationDependencies(
         captureTarget: { nil }, clearTarget: {},
-        insert: { text in
+        insert: { text, _ in
           recorder.recordInsert(text)
           return .inserted
         },

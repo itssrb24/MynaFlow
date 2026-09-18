@@ -65,14 +65,23 @@ public final class MacOSTextInserter: TextInsertionService {
   public func insert(
     _ text: String,
     replacingSelection: Bool,
-    pressEnter: Bool
+    pressEnter: Bool,
+    allowBlindPaste: Bool = false
   ) async throws -> TextInsertionResult {
     let applicationReady = await activateCapturedApplication()
     let focusedTarget = focusedElement(for: capturedApplication)
     if capturedElement != nil, !capturedTargetIsStillFocused(focusedTarget) {
       return safeFallbackForChangedTarget(text, current: focusedTarget)
     }
-    let resolvedTarget = focusedTarget ?? currentFocusedElement()
+    var resolvedTarget = focusedTarget ?? currentFocusedElement()
+    if resolvedTarget == nil, let application = capturedApplication ?? NSWorkspace.shared.frontmostApplication {
+      // Chromium and Electron only build an accessibility tree once asked,
+      // and can still be building it when we first look.
+      wokenChromiumPids.remove(application.processIdentifier)
+      wakeChromiumAccessibility(of: application)
+      try? await Task.sleep(for: .milliseconds(120))
+      resolvedTarget = focusedElement(for: application)
+    }
     let role: String = resolvedTarget.flatMap { copyAttribute($0, kAXRoleAttribute) } ?? ""
     let subrole: String = resolvedTarget.flatMap { copyAttribute($0, kAXSubroleAttribute) } ?? ""
     // Without Accessibility every query above fails anyway; asking the OS
@@ -80,9 +89,32 @@ public final class MacOSTextInserter: TextInsertionService {
     let plan = InsertionPlanner.plan(
       accessibilityGranted: AXIsProcessTrusted(),
       hasFocusedElement: resolvedTarget != nil,
-      isSecureField: SecureFieldDetector.isSecure(role: role, subrole: subrole))
+      isSecureField: SecureFieldDetector.isSecure(role: role, subrole: subrole),
+      allowBlindPaste: allowBlindPaste)
 
     switch plan {
+    case .blindPaste:
+      // No element to verify, so this route exists only where the user asked
+      // for it. Activate the target, paste, and take the text back off the
+      // pasteboard once it has landed.
+      let previousClipboard = clipboardBeforeOwnedWrite()
+      guard copyToClipboard(text) else {
+        lastInsertionDiagnostics = diagnostic(
+          route: "blind-paste", role: "unavailable", focus: "unresolved",
+          clipboard: "failed", value: "unavailable")
+        return .noFocusedField
+      }
+      let ownedChangeCount = NSPasteboard.general.changeCount
+      postPasteShortcut()
+      try? await Task.sleep(for: .milliseconds(350))
+      lastInsertionDiagnostics = diagnostic(
+        route: "blind-paste", role: "unavailable", focus: "unresolved",
+        clipboard: "ready", value: "unverified")
+      if pressEnter { postKey(keyCode: 36) }
+      restoreClipboard(
+        to: previousClipboard, onlyIfCurrentEquals: text,
+        expectedChangeCount: ownedChangeCount)
+      return .pastedFromClipboard
     case .historyPlusClipboard:
       // Fail closed: with no resolvable focused element we cannot rule out a
       // password field, so never synthesize a paste into the unknown. The

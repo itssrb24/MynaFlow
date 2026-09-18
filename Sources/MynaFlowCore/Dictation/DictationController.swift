@@ -14,7 +14,9 @@ extension FlowStore: DictationStoring {}
 public struct DictationDependencies: Sendable {
   public var captureTarget: @Sendable () async -> String?
   public var clearTarget: @Sendable () async -> Void
-  public var insert: @Sendable (String) async throws -> TextInsertionResult
+  /// (text, allowBlindPaste) — the second argument carries the target app's
+  /// opt-in for pasting into a field Accessibility cannot see.
+  public var insert: @Sendable (String, Bool) async throws -> TextInsertionResult
   public var copyToClipboard: @Sendable (String) async -> Bool
   /// The inserter's explanation of the last attempt; recorded on fallbacks.
   public var insertionDiagnostics: @Sendable () async -> String?
@@ -22,7 +24,7 @@ public struct DictationDependencies: Sendable {
   public init(
     captureTarget: @escaping @Sendable () async -> String?,
     clearTarget: @escaping @Sendable () async -> Void,
-    insert: @escaping @Sendable (String) async throws -> TextInsertionResult,
+    insert: @escaping @Sendable (String, Bool) async throws -> TextInsertionResult,
     copyToClipboard: @escaping @Sendable (String) async -> Bool,
     insertionDiagnostics: @escaping @Sendable () async -> String? = { nil }
   ) {
@@ -242,7 +244,7 @@ public actor DictationController {
     var blockedBySecureField = false
     var onClipboard = false
     do {
-      switch try await dependencies.insert(text) {
+      switch try await dependencies.insert(text, rule?.pasteWhenUnseen ?? false) {
       case .inserted, .replacedSelection, .pastedFromClipboard:
         insertionMethod = .ax
       case .copiedToClipboard:
