@@ -2,6 +2,17 @@ import AVFoundation
 import MynaFlowCore
 import os
 
+/// Why capture could not start, in terms the indicator can show the user.
+enum MicrophoneCaptureError: Error, LocalizedError {
+  case noUsableInputDevice
+
+  var errorDescription: String? {
+    switch self {
+    case .noUsableInputDevice: "No usable microphone — check Sound settings"
+    }
+  }
+}
+
 @MainActor
 final class MicrophoneCapture {
   private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "audio")
@@ -51,6 +62,15 @@ final class MicrophoneCapture {
       Self.log.warning("voice processing unavailable: \(error.localizedDescription)")
     }
     let format = input.outputFormat(forBus: 0)
+    // With no usable input device (everything unplugged, AirPods just gone,
+    // the device claimed by another app) this comes back 0 Hz / 0 channels,
+    // and installTap raises an Objective-C exception — uncatchable from Swift,
+    // so the app dies on the hotkey press. Refuse it as an ordinary error and
+    // let the caller show "Microphone unavailable".
+    guard format.sampleRate > 0, format.channelCount > 0 else {
+      Self.log.error("input device reported an unusable format; refusing to start")
+      throw MicrophoneCaptureError.noUsableInputDevice
+    }
     let stream = AsyncStream<AudioFrame> { continuation in
       self.continuation = continuation
     }

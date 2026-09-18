@@ -14,11 +14,13 @@ struct StartupRecoveryTests {
     #expect(aside.lastPathComponent == "flow.corrupt-20260915-153000.sqlite")
   }
 
-  @Test("Sidecar files (-wal, -shm) are moved with the database")
+  @Test("Every sidecar moves with the database, including the rollback journal")
   func sidecars() {
+    // -journal appears when WAL is unavailable (a network home directory), and
+    // it holds the same dictated text as the database itself.
     let database = URL(fileURLWithPath: "/tmp/x/flow.sqlite")
     let names = StartupRecovery.sidecarURLs(for: database).map(\.lastPathComponent)
-    #expect(names == ["flow.sqlite-wal", "flow.sqlite-shm"])
+    #expect(names == ["flow.sqlite-wal", "flow.sqlite-shm", "flow.sqlite-journal"])
   }
 
   @Test("Recover moves a corrupt database aside and a fresh open succeeds")
@@ -37,5 +39,31 @@ struct StartupRecoveryTests {
     let store = try await FlowStore.open(at: database)
     #expect(await store.schemaVersion() == 6)
     await store.close()
+  }
+}
+
+@Suite("Scratch sweep")
+struct ScratchSweepTests {
+  @Test("Audio stranded by a crash is cleared at launch")
+  func clearsStrandedAudio() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("flow-scratch-\(UUID().uuidString)", isDirectory: true)
+    let paths = ApplicationPaths(root: root)
+    try FileManager.default.createDirectory(at: paths.scratch, withIntermediateDirectories: true)
+    let stranded = paths.scratch.appendingPathComponent("dictation-abc.wav")
+    try Data("not really audio".utf8).write(to: stranded)
+
+    #expect(paths.clearScratch() == 1)
+    #expect(!FileManager.default.fileExists(atPath: stranded.path))
+    // The directory itself survives, and sweeping again is harmless.
+    #expect(paths.clearScratch() == 0)
+    #expect(FileManager.default.fileExists(atPath: paths.scratch.path))
+  }
+
+  @Test("Sweeping a directory that does not exist yet is a no-op")
+  func toleratesMissingDirectory() {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("flow-none-\(UUID().uuidString)", isDirectory: true)
+    #expect(ApplicationPaths(root: root).clearScratch() == 0)
   }
 }

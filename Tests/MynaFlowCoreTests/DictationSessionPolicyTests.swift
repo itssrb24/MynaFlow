@@ -10,9 +10,9 @@ struct DictationSessionPolicyTests {
     var policy = DictationSessionPolicy()
     #expect(policy.handle(.holdDown) == [.beginStart(.hold)])
     #expect(policy.phase == .starting(.hold))
-    #expect(policy.handle(.startSucceeded) == [.startCapture])
+    #expect(policy.handle(.startSucceeded) == [.startCapture, .armAutoStop])
     #expect(policy.phase == .recording(.hold))
-    #expect(policy.handle(.holdUp) == [.stopCapture])
+    #expect(policy.handle(.holdUp) == [.disarmAutoStop, .stopCapture])
     #expect(policy.phase == .finishing)
     #expect(policy.handle(.captureFinished) == [])
     #expect(policy.phase == .idle)
@@ -78,10 +78,47 @@ struct DictationSessionPolicyTests {
     #expect(recording.handle(.cancel) == [.disarmAutoStop, .stopCapture, .cancelController, .hideIndicator])
     #expect(recording.phase == .idle)
 
+    // Cancelling mid-start must NOT cancel the controller yet: it is still
+    // inside startDictation and would see itself idle, then come up recording
+    // with the session already idle — dictation dead until relaunch.
     var starting = DictationSessionPolicy()
     _ = starting.handle(.holdDown)
-    #expect(starting.handle(.cancel) == [.cancelController, .hideIndicator])
+    #expect(starting.handle(.cancel) == [.hideIndicator])
+    #expect(starting.phase == .abandoned)
+    // The teardown happens when the start finally lands.
+    #expect(starting.handle(.startSucceeded) == [.cancelController, .hideIndicator])
     #expect(starting.phase == .idle)
+  }
+
+  @Test("A start that fails after being cancelled just hides the indicator")
+  func cancelThenStartFails() {
+    var policy = DictationSessionPolicy()
+    _ = policy.handle(.togglePressed)
+    _ = policy.handle(.cancel)
+    #expect(policy.phase == .abandoned)
+    #expect(policy.handle(.startFailed) == [.hideIndicator])
+    #expect(policy.phase == .idle)
+  }
+
+  @Test("Cancelling twice while starting stays abandoned rather than stranding")
+  func doubleCancelWhileStarting() {
+    var policy = DictationSessionPolicy()
+    _ = policy.handle(.holdDown)
+    _ = policy.handle(.cancel)
+    #expect(policy.handle(.cancel) == [.hideIndicator])
+    #expect(policy.phase == .abandoned)
+    #expect(policy.handle(.startSucceeded) == [.cancelController, .hideIndicator])
+  }
+
+  @Test("Hold has a safety valve: a key-up that never arrives still stops")
+  func holdAutoStops() {
+    // Secure input, a Command-Tab, or a sleeping display can swallow the
+    // key-up. Without the cap the microphone would stay open indefinitely.
+    var policy = DictationSessionPolicy()
+    _ = policy.handle(.holdDown)
+    #expect(policy.handle(.startSucceeded).contains(.armAutoStop))
+    #expect(policy.handle(.autoStop) == [.stopCapture])
+    #expect(policy.phase == .finishing)
   }
 
   @Test("Hold pressed during a toggle session is ignored — indicator stays live")

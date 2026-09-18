@@ -17,7 +17,7 @@ public enum StartupRecovery {
   /// SQLite's WAL and shared-memory files must travel with the main file, or
   /// a fresh database would inherit a stale journal.
   public static func sidecarURLs(for database: URL) -> [URL] {
-    ["-wal", "-shm"].map {
+    ["-wal", "-shm", "-journal"].map {
       URL(fileURLWithPath: database.path + $0)
     }
   }

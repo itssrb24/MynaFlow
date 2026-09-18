@@ -129,12 +129,18 @@ final class AppCoordinator {
       self.store = store
 
       self.paths = paths
+      // Audio never outlives its dictation; make that true of a previous run
+      // that was killed mid-recording, too.
+      let strandedAudio = paths.clearScratch()
+      ParakeetEngine.pinModelRegistry()
       do {
         try DiagnosticsLog.shared.configure(directory: paths.diagnostics)
       } catch {
         Self.log.error("diagnostics log unavailable: \(error)")
       }
-      diag("startup: schema v\(await store.schemaVersion()), recovered=\(recoveredDatabaseURL != nil)")
+      diag(
+        "startup: schema v\(await store.schemaVersion()), "
+          + "recovered=\(recoveredDatabaseURL != nil), strandedAudio=\(strandedAudio)")
       let apple = AppleSpeechEngine()
       await apple.resolveLocale()
       appleEngine = apple
@@ -212,9 +218,15 @@ final class AppCoordinator {
   /// App quit: stop the model server (otherwise it outlives us holding
   /// gigabytes) and close the database cleanly.
   /// Event-log line: unified logging for `log stream`, plus the exportable file.
+  ///
+  /// Redacted once, here, and the same redacted string goes to both sinks.
+  /// `privacy: .public` opts out of os_log's own redaction, so logging the raw
+  /// message would write it verbatim into the unified log — which persists on
+  /// disk, outlives the app, and is collected by `sysdiagnose`.
   func diag(_ message: String) {
-    Self.log.info("\(message, privacy: .public)")
-    DiagnosticsLog.shared.write("info", "app", message)
+    let safe = SensitiveLogRedactor().redact(message)
+    Self.log.info("\(safe, privacy: .public)")
+    DiagnosticsLog.shared.write("info", "app", safe)
   }
 
   func exportDiagnostics() {
@@ -425,7 +437,17 @@ final class AppCoordinator {
 
   func refreshPermissions() {
     microphoneGranted = permissions.microphoneAuthorization == .authorized
+    let wasGranted = accessibilityGranted
     accessibilityGranted = permissions.hasAccessibilityPermission
+    // A global event monitor is only live if the process was trusted when it
+    // was created. On a first run the app starts untrusted, so the monitor
+    // installed at launch is inert — and stays inert after the user grants
+    // Accessibility, leaving every hotkey dead until the next sleep/wake.
+    // Re-install on the transition; install() tears the old one down first.
+    if accessibilityGranted, !wasGranted {
+      diag("accessibility granted — reinstalling hotkey monitor")
+      hotkeyMonitor?.install()
+    }
   }
 
   func requestMicrophone() async {
@@ -898,7 +920,10 @@ final class AppCoordinator {
         return first
       }
     } catch {
-      diag("auto-polish failed (\(style.name)): \(error)")
+      // Never interpolate a whole error here: LocalProcessError carries the
+      // subprocess's stdout, which on a partial failure is the model's rewrite
+      // of the user's own words.
+      diag("auto-polish failed (\(style.name)): \(type(of: error))")
       result = nil
     }
     guard let trimmed = result?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty

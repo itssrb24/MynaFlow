@@ -176,7 +176,7 @@ public actor LlamaServerHost {
     }
     // Crash safety: kill any orphaned server from a previous run of *our exact*
     // binary before starting a fresh one (the quit hook covers clean exits).
-    killOrphans(executablePath: configuration.executableURL.path)
+    await Self.killOrphans(executablePath: configuration.executableURL.path)
 
     let token = try Self.makeAPIToken()
     apiToken = token
@@ -238,15 +238,25 @@ public actor LlamaServerHost {
   }
 
   /// Writes the captured stderr tail to Diagnostics/llama-server.stderr.log
-  /// so the export carries the server's own words for its last failure.
+  /// for local debugging of a failed spawn.
+  ///
+  /// Deliberately NOT part of "Export diagnostics": this is the server's raw,
+  /// unredacted output, and the export is a file users are invited to send to
+  /// someone else. `DiagnosticsLog.exportData()` reads only flow.log.
   private func dumpServerStderr(reason: String) {
     guard let directory = configuration.diagnosticsDirectory else { return }
     let data = stderrTail.withLock { $0.data }
     guard !data.isEmpty else { return }
     let manager = FileManager.default
-    try? manager.createDirectory(at: directory, withIntermediateDirectories: true)
+    try? manager.createDirectory(
+      at: directory, withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700])
     let url = directory.appendingPathComponent("llama-server.stderr.log")
-    try? data.write(to: url, options: .atomic)
+    // Created with its mode rather than chmod'd after: raw server output must
+    // never be briefly world-readable.
+    try? manager.removeItem(at: url)
+    _ = manager.createFile(
+      atPath: url.path, contents: data, attributes: [.posixPermissions: 0o600])
     MynaLog.warn("stderr tail saved (\(data.count) bytes, reason=\(reason))")
   }
 
@@ -442,14 +452,23 @@ public actor LlamaServerHost {
   }
 
   /// Best-effort: terminate any process whose executable is exactly ours.
-  private func killOrphans(executablePath: String) {
-    let pkill = Process()
-    pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-    pkill.arguments = ["-f", Self.orphanProcessPattern(executablePath: executablePath)]
-    pkill.standardOutput = FileHandle.nullDevice
-    pkill.standardError = FileHandle.nullDevice
-    try? pkill.run()
-    pkill.waitUntilExit()
+  ///
+  /// Runs off the actor. `waitUntilExit()` pumps the calling thread's run loop,
+  /// and on an actor's cooperative thread the exit notice can be missed — the
+  /// hang `LocalProcessExecutor` documents and designs around. This sits on the
+  /// spawn path, so stalling here would deadlock the host permanently and take
+  /// polish down with it until the app was force-quit.
+  nonisolated static func killOrphans(executablePath: String) async {
+    let pattern = orphanProcessPattern(executablePath: executablePath)
+    await Task.detached(priority: .utility) {
+      let pkill = Process()
+      pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+      pkill.arguments = ["-f", pattern]
+      pkill.standardOutput = FileHandle.nullDevice
+      pkill.standardError = FileHandle.nullDevice
+      try? pkill.run()
+      pkill.waitUntilExit()
+    }.value
   }
 
   /// `pkill -f` consumes an extended regular expression. Escape the executable
@@ -475,17 +494,22 @@ enum MynaLog {
   private static let logger = Logger(
     subsystem: "com.itssrb24.MynaFlow", category: "llm")
 
+  // Redacted once here, so the unified log and the exportable file carry the
+  // same safe string. `privacy: .public` opts out of os_log's own redaction.
   static func info(_ message: String) {
-    logger.info("\(message, privacy: .public)")
-    DiagnosticsLog.shared.write("info", "llm", message)
+    let safe = SensitiveLogRedactor().redact(message)
+    logger.info("\(safe, privacy: .public)")
+    DiagnosticsLog.shared.write("info", "llm", safe)
   }
   static func warn(_ message: String) {
-    logger.warning("\(message, privacy: .public)")
-    DiagnosticsLog.shared.write("warn", "llm", message)
+    let safe = SensitiveLogRedactor().redact(message)
+    logger.warning("\(safe, privacy: .public)")
+    DiagnosticsLog.shared.write("warn", "llm", safe)
   }
   static func error(_ message: String) {
-    logger.error("\(message, privacy: .public)")
-    DiagnosticsLog.shared.write("error", "llm", message)
+    let safe = SensitiveLogRedactor().redact(message)
+    logger.error("\(safe, privacy: .public)")
+    DiagnosticsLog.shared.write("error", "llm", safe)
   }
 }
 

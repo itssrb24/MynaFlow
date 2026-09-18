@@ -23,6 +23,24 @@ public struct ApplicationPaths: Sendable {
     scratch = root.appendingPathComponent("Scratch", isDirectory: true)
   }
 
+  /// Removes anything left in the scratch directory.
+  ///
+  /// Scratch holds one WAV per dictation and nothing else, and every normal
+  /// path deletes it. A crash, a force-quit, or quitting mid-recording can
+  /// still strand one, and recorded audio is the last thing that should
+  /// linger, so the invariant is re-established at launch rather than assumed.
+  @discardableResult
+  public func clearScratch(fileManager: FileManager = .default) -> Int {
+    guard let contents = try? fileManager.contentsOfDirectory(
+      at: scratch, includingPropertiesForKeys: nil)
+    else { return 0 }
+    var removed = 0
+    for url in contents where (try? fileManager.removeItem(at: url)) != nil {
+      removed += 1
+    }
+    return removed
+  }
+
   /// The same locations as `production()` without creating anything. Safe to
   /// call from hot paths such as model-availability probes during view updates.
   public static func resolved(fileManager: FileManager = .default) -> ApplicationPaths? {
@@ -45,7 +63,7 @@ public struct ApplicationPaths: Sendable {
     let paths = ApplicationPaths(root: root)
     // Create, then re-assert: creation attributes do nothing for a directory
     // that already exists with looser bits.
-    for directory in [root, paths.models, paths.scratch, paths.diagnostics] {
+    for directory in [root, paths.models, paths.scratch, paths.diagnostics, paths.runtimes] {
       try fileManager.createDirectory(
         at: directory, withIntermediateDirectories: true,
         attributes: [.posixPermissions: 0o700])

@@ -59,7 +59,10 @@ public struct DictationSessionPolicy: Equatable, Sendable {
       return [.beginStart(.toggle)]
     case (.starting(let mode), .startSucceeded):
       phase = .recording(mode)
-      return mode == .toggle ? [.startCapture, .armAutoStop] : [.startCapture]
+      // Hold is armed too. Its key-up can simply never arrive — secure input
+      // engaging mid-hold, a Command-Tab eating the edge, the display sleeping
+      // — and without a cap the microphone stays open until the app is quit.
+      return [.startCapture, .armAutoStop]
     case (.starting, .startFailed):
       phase = .idle
       return [.startFailedIndicator]
@@ -77,11 +80,11 @@ public struct DictationSessionPolicy: Equatable, Sendable {
     // Recording
     case (.recording(.hold), .holdUp):
       phase = .finishing
-      return [.stopCapture]
+      return [.disarmAutoStop, .stopCapture]
     case (.recording(.toggle), .togglePressed), (.recording(.toggle), .menuStart):
       phase = .finishing
       return [.disarmAutoStop, .stopCapture]
-    case (.recording(.toggle), .autoStop):
+    case (.recording, .autoStop):
       phase = .finishing
       return [.stopCapture]
     case (.recording, .deviceLost):
@@ -91,13 +94,19 @@ public struct DictationSessionPolicy: Equatable, Sendable {
     // Cancel
     case (.idle, .cancel), (.finishing, .cancel):
       return []
-    case (.starting, .cancel), (.abandoned, .cancel):
+    // The controller is still inside startDictation here, suspended on an
+    // Accessibility call into another app. Cancelling it now would find it
+    // still idle and do nothing, and it would then come up recording with
+    // nobody listening — dictation dead until relaunch. Wait for the start to
+    // land, which is exactly what `.abandoned` already does.
+    case (.starting, .cancel):
+      phase = .abandoned
+      return [.hideIndicator]
+    case (.abandoned, .cancel):
+      return [.hideIndicator]
+    case (.recording, .cancel):
       phase = .idle
-      return [.cancelController, .hideIndicator]
-    case (.recording(let mode), .cancel):
-      phase = .idle
-      let disarm: [Effect] = mode == .toggle ? [.disarmAutoStop] : []
-      return disarm + [.stopCapture, .cancelController, .hideIndicator]
+      return [.disarmAutoStop, .stopCapture, .cancelController, .hideIndicator]
 
     // Finishing
     case (.finishing, .captureFinished):

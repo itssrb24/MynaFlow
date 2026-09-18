@@ -31,6 +31,12 @@ public final class MacOSTextInserter: TextInsertionService {
   private func wakeChromiumAccessibility(of application: NSRunningApplication) {
     let pid = application.processIdentifier
     guard !wokenChromiumPids.contains(pid) else { return }
+    // Every relaunch of Chrome, Slack or an Electron editor is a new pid, so
+    // over days in the menu bar this set would only ever grow. Drop the ones
+    // whose process has since exited.
+    if wokenChromiumPids.count >= 32 {
+      wokenChromiumPids = wokenChromiumPids.filter { kill($0, 0) == 0 }
+    }
     wokenChromiumPids.insert(pid)
     let element = AXUIElementCreateApplication(pid)
     _ = AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)

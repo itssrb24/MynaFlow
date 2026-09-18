@@ -173,7 +173,11 @@ public actor DictationController {
         at: scratchDirectory, withIntermediateDirectories: true,
         attributes: [.posixPermissions: 0o700])
       let wav = WaveEncoder().encode(frames, outputSampleRate: 16_000)
-      try wav.write(to: wavURL, options: .atomic)
+      // Created with its mode rather than chmod'd after: recorded audio must
+      // never exist world-readable, not even briefly.
+      guard FileManager.default.createFile(
+        atPath: wavURL.path, contents: wav, attributes: [.posixPermissions: 0o600])
+      else { throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: wavURL.path]) }
     } catch {
       try? machine.apply(.stop)
       onStateChange(machine.state)

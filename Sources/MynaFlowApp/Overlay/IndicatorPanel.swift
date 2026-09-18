@@ -205,6 +205,12 @@ final class IndicatorPanelController {
       AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef) == .success,
       let positionRef, let sizeRef
     else { return nil }
+    // Electron and Java accessibility servers, and half-torn-down windows,
+    // hand back other types here. This runs on every hotkey press, so a force
+    // cast would be a crash on someone else's Mac.
+    guard CFGetTypeID(positionRef) == AXValueGetTypeID(),
+      CFGetTypeID(sizeRef) == AXValueGetTypeID()
+    else { return nil }
     var position = CGPoint.zero
     var size = CGSize.zero
     guard AXValueGetValue(positionRef as! AXValue, .cgPoint, &position),

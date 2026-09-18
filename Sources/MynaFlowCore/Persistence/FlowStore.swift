@@ -669,7 +669,7 @@ public actor FlowStore {
     try executeSQL("PRAGMA journal_mode=WAL")
     try executeSQL("PRAGMA foreign_keys=ON")
     try migrate()
-    for suffix in ["-wal", "-shm"] {
+    for suffix in ["-wal", "-shm", "-journal"] {
       let sidecar = url.path + suffix
       if fileManager.fileExists(atPath: sidecar) {
         try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: sidecar)

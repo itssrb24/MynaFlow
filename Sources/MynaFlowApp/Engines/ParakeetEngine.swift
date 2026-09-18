@@ -111,8 +111,21 @@ actor ParakeetEngine: SpeechEngine, TranscriptionProviding {
     }
   }
 
+  /// The only host this engine will ever fetch a model from.
+  ///
+  /// FluidAudio resolves its registry as: programmatic override, then the
+  /// `REGISTRY_URL` and `MODEL_REGISTRY_URL` environment variables, then
+  /// HuggingFace. Anything able to set this app's environment could otherwise
+  /// point a 600 MB CoreML download at a host of its choosing, and FluidAudio
+  /// checks only ETag and size. Claiming downloads only come from
+  /// huggingface.co means pinning it rather than inheriting it.
+  static func pinModelRegistry() {
+    ModelRegistry.baseURL = "https://huggingface.co"
+  }
+
   /// Explicit, user-approved download + load.
   func install(progress: @escaping @Sendable (Double) -> Void) async throws {
+    Self.pinModelRegistry()
     try await manager.loadModels(to: modelsBaseDirectory) { downloadProgress in
       progress(downloadProgress.fractionCompleted)
     }
