@@ -83,6 +83,20 @@ struct MenuBarMenu: View {
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
+    if let failure = coordinator.startupFailure {
+      Text("Myna Flow couldn't start")
+      Text(failure)
+      Divider()
+      Button("Export diagnostics…") { coordinator.exportDiagnostics() }
+      Button("Quit Myna Flow") { NSApplication.shared.terminate(nil) }
+    } else {
+      running
+    }
+  }
+
+  /// The ordinary menu, once the app actually started.
+  @ViewBuilder
+  private var running: some View {
     if let recovered = coordinator.recoveredDatabaseURL {
       Button("History database was reset — reveal the old file (\(recovered.lastPathComponent))") {
         coordinator.revealRecoveredDatabase()

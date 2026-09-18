@@ -666,6 +666,9 @@ public actor FlowStore {
     handle = database
 
     try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    // Without this, a lock held by anything else fails the write immediately
+    // and the dictation falls back to clipboard-only.
+    sqlite3_busy_timeout(database, 5_000)
     try executeSQL("PRAGMA journal_mode=WAL")
     try executeSQL("PRAGMA foreign_keys=ON")
     try migrate()

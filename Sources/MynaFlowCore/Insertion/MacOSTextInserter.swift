@@ -79,23 +79,32 @@ public final class MacOSTextInserter: TextInsertionService {
     if capturedElement != nil, !capturedTargetIsStillFocused(focusedTarget) {
       return safeFallbackForChangedTarget(text, current: focusedTarget)
     }
-    var resolvedTarget = focusedTarget ?? currentFocusedElement()
-    if resolvedTarget == nil, let application = capturedApplication ?? NSWorkspace.shared.frontmostApplication {
+    var resolution = focusedTarget.map {
+      FocusResolution(element: $0, focusVerified: true, secureFieldSeen: false)
+    } ?? resolveFocus(for: NSWorkspace.shared.frontmostApplication)
+    if resolution == nil, let application = capturedApplication ?? NSWorkspace.shared.frontmostApplication {
       // Chromium and Electron only build an accessibility tree once asked,
       // and can still be building it when we first look.
       wokenChromiumPids.remove(application.processIdentifier)
       wakeChromiumAccessibility(of: application)
       try? await Task.sleep(for: .milliseconds(120))
-      resolvedTarget = focusedElement(for: application)
+      resolution = resolveFocus(for: application)
     }
+    let resolvedTarget = resolution?.element
     let role: String = resolvedTarget.flatMap { copyAttribute($0, kAXRoleAttribute) } ?? ""
     let subrole: String = resolvedTarget.flatMap { copyAttribute($0, kAXSubroleAttribute) } ?? ""
-    // Without Accessibility every query above fails anyway; asking the OS
-    // directly makes the plan explicit instead of relying on that side effect.
+    // Insertion is a synthesized Command-V, which goes wherever keyboard focus
+    // actually is. When nothing in the window claimed focus we are guessing,
+    // and vetting the element we guessed proves nothing about the field that
+    // will receive the text — so if this window holds a password field at all,
+    // refuse rather than risk typing into it.
+    let guessingIntoASecureWindow =
+      resolution.map { !$0.focusVerified && $0.secureFieldSeen } ?? false
     let plan = InsertionPlanner.plan(
       accessibilityGranted: AXIsProcessTrusted(),
       hasFocusedElement: resolvedTarget != nil,
-      isSecureField: SecureFieldDetector.isSecure(role: role, subrole: subrole),
+      isSecureField: SecureFieldDetector.isSecure(role: role, subrole: subrole)
+        || guessingIntoASecureWindow,
       allowBlindPaste: allowBlindPaste)
 
     switch plan {
@@ -174,12 +183,20 @@ public final class MacOSTextInserter: TextInsertionService {
       postPasteShortcut()
       try? await Task.sleep(for: .milliseconds(350))
       let valueAfter: String? = copyAttribute(target, kAXValueAttribute)
-      let valueState: String
-      if let valueBefore, let valueAfter {
-        valueState = valueBefore == valueAfter ? "unchanged" : "changed"
-      } else {
-        valueState = "unavailable"
+      // Both reads succeeded and the field is identical: the paste provably
+      // did not land. Apps that are slow to process a synthesized Command-V
+      // (an Electron cold start, a beachballing app, a loaded machine) fall
+      // here. Leave the text on the clipboard so the user can paste it
+      // themselves, and say so — restoring the old clipboard now would take
+      // the dictation away as well, and could even paste the wrong thing if
+      // the Command-V lands late.
+      if let valueBefore, let valueAfter, valueBefore == valueAfter {
+        lastInsertionDiagnostics = diagnostic(
+          route: "paste", role: role, focus: "ready", clipboard: "ready", value: "unchanged")
+        scheduleClipboardCleanup(payload: text, previous: previousClipboard)
+        return .copiedToClipboard
       }
+      let valueState = (valueBefore == nil || valueAfter == nil) ? "unavailable" : "changed"
       lastInsertionDiagnostics = diagnostic(
         route: "paste", role: role, focus: "ready", clipboard: "ready", value: valueState)
       if pressEnter { postKey(keyCode: 36) }
@@ -225,8 +242,7 @@ public final class MacOSTextInserter: TextInsertionService {
 
   @discardableResult
   private func copyToClipboard(_ text: String) -> Bool {
-    NSPasteboard.general.clearContents()
-    return NSPasteboard.general.setString(text, forType: .string)
+    PasteboardHygiene.writeConcealed(text, to: NSPasteboard.general)
   }
 
   private func clipboardBeforeOwnedWrite() -> String? {
@@ -403,6 +419,25 @@ public final class MacOSTextInserter: TextInsertionService {
 
 @MainActor
 func focusedElement(for application: NSRunningApplication?) -> AXUIElement? {
+  resolveFocus(for: application)?.element
+}
+
+/// What the accessibility tree could actually tell us about where typing goes.
+///
+/// The distinction matters because insertion is a synthesized Command-V, and
+/// that lands wherever keyboard focus really is — not necessarily on the
+/// element we inspected. When focus is only inferred, vetting the element we
+/// found proves nothing about the field that will receive the text.
+struct FocusResolution {
+  let element: AXUIElement
+  /// The element itself reports `AXFocused`.
+  let focusVerified: Bool
+  /// A secure field was seen while searching this window.
+  let secureFieldSeen: Bool
+}
+
+@MainActor
+func resolveFocus(for application: NSRunningApplication?) -> FocusResolution? {
   if let application {
     let applicationElement = AXUIElementCreateApplication(application.processIdentifier)
     if let focused: AXUIElement = copyAttribute(
@@ -420,7 +455,7 @@ func focusedElement(for application: NSRunningApplication?) -> AXUIElement? {
 }
 
 @MainActor
-private func deepestFocusedElement(startingAt root: AXUIElement) -> AXUIElement {
+private func deepestFocusedElement(startingAt root: AXUIElement) -> FocusResolution {
   var current = root
   for _ in 0..<8 {
     guard let next: AXUIElement = copyAttribute(current, kAXFocusedUIElementAttribute),
@@ -431,17 +466,29 @@ private func deepestFocusedElement(startingAt root: AXUIElement) -> AXUIElement 
 
   let role: String = copyAttribute(current, kAXRoleAttribute) ?? ""
   guard role == (kAXWindowRole as String) || role == (kAXGroupRole as String) else {
-    return current
+    return FocusResolution(element: current, focusVerified: true, secureFieldSeen: false)
   }
 
   var remainingElements = 500
   var fallbackEditable: AXUIElement?
-  return editableDescendant(
+  var secureFieldSeen = false
+  if let focusedMatch = editableDescendant(
     of: current,
     depth: 0,
     remainingElements: &remainingElements,
-    fallbackEditable: &fallbackEditable
-  ) ?? fallbackEditable ?? current
+    fallbackEditable: &fallbackEditable,
+    secureFieldSeen: &secureFieldSeen
+  ) {
+    return FocusResolution(
+      element: focusedMatch, focusVerified: true, secureFieldSeen: secureFieldSeen)
+  }
+  // Nothing claimed focus. Electron's contenteditable controls do this, so a
+  // best-guess editable descendant is still worth returning — but flagged, so
+  // the caller knows it is a guess.
+  return FocusResolution(
+    element: fallbackEditable ?? current,
+    focusVerified: false,
+    secureFieldSeen: secureFieldSeen)
 }
 
 @MainActor
@@ -449,17 +496,22 @@ private func editableDescendant(
   of element: AXUIElement,
   depth: Int,
   remainingElements: inout Int,
-  fallbackEditable: inout AXUIElement?
+  fallbackEditable: inout AXUIElement?,
+  secureFieldSeen: inout Bool
 ) -> AXUIElement? {
   guard depth < 14, remainingElements > 0 else { return nil }
   remainingElements -= 1
 
   let role: String = copyAttribute(element, kAXRoleAttribute) ?? ""
+  let subrole: String = copyAttribute(element, kAXSubroleAttribute) ?? ""
   let focused: Bool = copyAttribute(element, kAXFocusedAttribute) ?? false
   let enabled: Bool = copyAttribute(element, kAXEnabledAttribute) ?? true
+  let isSecure = SecureFieldDetector.isSecure(role: role, subrole: subrole)
+  if isSecure { secureFieldSeen = true }
   let isEditable =
-    role == (kAXTextFieldRole as String) || role == (kAXTextAreaRole as String)
-    || role == (kAXComboBoxRole as String)
+    !isSecure
+    && (role == (kAXTextFieldRole as String) || role == (kAXTextAreaRole as String)
+      || role == (kAXComboBoxRole as String))
 
   if focused, enabled, isEditable {
     return element
@@ -480,7 +532,8 @@ private func editableDescendant(
       of: child,
       depth: depth + 1,
       remainingElements: &remainingElements,
-      fallbackEditable: &fallbackEditable
+      fallbackEditable: &fallbackEditable,
+      secureFieldSeen: &secureFieldSeen
     ) {
       return match
     }

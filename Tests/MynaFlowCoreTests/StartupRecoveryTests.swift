@@ -67,3 +67,29 @@ struct ScratchSweepTests {
     #expect(ApplicationPaths(root: root).clearScratch() == 0)
   }
 }
+
+@Suite("Corruption classification")
+struct CorruptionClassificationTests {
+  @Test(
+    "Only a genuinely unusable file earns a move-aside",
+    arguments: [
+      ("database disk image is malformed", true),
+      ("file is not a database", true),
+      ("file is encrypted or is not a database", true),
+      ("database corruption detected", true),
+      ("database is locked", false),
+      ("disk I/O error", false),
+      ("unable to open database file", false),
+      ("attempt to write a readonly database", false),
+    ])
+  func classifies(message: String, isCorrupt: Bool) {
+    // Renaming someone's entire history because the disk was briefly full
+    // looks exactly like losing it, so only real corruption qualifies.
+    #expect(StartupRecovery.isCorruption(FlowStoreError(message: message)) == isCorrupt)
+  }
+
+  @Test("A non-store error never triggers recovery")
+  func ignoresOtherErrors() {
+    #expect(!StartupRecovery.isCorruption(CocoaError(.fileNoSuchFile)))
+  }
+}

@@ -103,11 +103,15 @@ final class AppCoordinator {
   private var hotkeyMonitor: GlobalHotkeyMonitor?
   private var indicatorPanel: IndicatorPanelController?
   private var lastOutcome: DictationOutcome?
+  private var indicatorHideTask: Task<Void, Never>?
   /// Owns start/stop/cancel/capture; see DictationSessionPolicy for the rules.
   private var session: DictationSession?
   private var controllerState: DictationState = .idle
   /// Set when startup had to move a corrupt history database aside.
   private(set) var recoveredDatabaseURL: URL?
+  /// Set when startup failed outright: nothing works, and the menu says why
+  /// rather than looking healthy and doing nothing.
+  private(set) var startupFailure: String?
 
   private let launchedAt = Date()
 
@@ -119,9 +123,15 @@ final class AppCoordinator {
       do {
         store = try await FlowStore.open(at: paths.database)
       } catch {
-        // Move the unopenable file aside and start fresh: dictation must
-        // keep working, and nothing is deleted.
-        Self.log.error("history database failed to open: \(error); moving aside")
+        // Only move aside for a file SQLite says is actually corrupt. Opening
+        // can also fail for a full disk, a permissions failure on a network
+        // volume, or a lock — and renaming someone's entire history because
+        // the disk was briefly full would look exactly like losing it.
+        guard StartupRecovery.isCorruption(error) else {
+          Self.log.error("history database unavailable: \(error)")
+          throw error
+        }
+        Self.log.error("history database is corrupt: \(error); moving aside")
         let aside = try StartupRecovery.moveAside(database: paths.database)
         store = try await FlowStore.open(at: paths.database)
         recoveredDatabaseURL = aside
@@ -209,8 +219,13 @@ final class AppCoordinator {
       let readyMs = Int(Date().timeIntervalSince(self.launchedAt) * 1000)
       Self.log.info("ready in \(readyMs) ms")
     } catch {
+      // Everything below is nil now, so every menu item and hotkey would be a
+      // silent no-op and the menu bar would still show the healthy idle icon.
+      // Say so instead, and keep Quit and the diagnostics export reachable.
       Self.log.error("startup failed: \(error)")
-      indicator.display = .error("Startup failed: \(error.localizedDescription)")
+      DiagnosticsLog.shared.write("error", "app", "startup failed: \(error)")
+      startupFailure = error.localizedDescription
+      indicator.display = .error("Myna Flow couldn't start: \(error.localizedDescription)")
       indicatorPanel?.show()
     }
   }
@@ -857,6 +872,9 @@ final class AppCoordinator {
     case .blockedSecureField:
       indicator.display = .error("Blocked: password field")
     default:
+      // The pill says the text is on the clipboard, so it had better be:
+      // the dictation path copies on this route, this one used to forget.
+      copyToClipboard(record.finalText)
       indicator.display = .clipboardFallback(reason: nil)
     }
     indicatorPanel?.show()
@@ -1193,15 +1211,18 @@ final class AppCoordinator {
       switch outcome {
       case .replaced:
         indicator.display = .success(words: 0, note: nil)
+        indicatorPanel?.show()
         scheduleIndicatorHide(after: .seconds(1.2))
       case .cancelled:
         indicator.display = .hidden
         indicatorPanel?.hide()
       case .noSelection:
         indicator.display = .error("Select some text first")
+        indicatorPanel?.show()
         scheduleIndicatorHide(after: .seconds(2))
       case .failed(let message):
         indicator.display = .error(message)
+        indicatorPanel?.show()
         scheduleIndicatorHide(after: .seconds(2.5))
       }
     }
@@ -1374,11 +1395,15 @@ final class AppCoordinator {
         engine: (parakeetInstalled ? engineChoice : .apple).displayName)
     case .completed:
       menuBarState = .idle
-      if let outcome = lastOutcome, outcome.insertionMethod == .historyOnly {
-        // `.completed` with `.historyOnly` is exactly the no-focused-field
-        // route; every other history-only outcome carries a failure message
-        // and ends in `.failed` instead.
-        indicator.display = .clipboardFallback(reason: "no text field was focused")
+      if let outcome = lastOutcome, outcome.insertionMethod != .ax {
+        // Anything that did not land at the cursor gets the honest pill, not
+        // a green tick. `.clipboard` means the app refused the paste; the text
+        // is on the clipboard for 30 seconds, so saying "inserted" would send
+        // the user looking for words that are not there until it expires.
+        let reason = outcome.insertionMethod == .clipboard
+          ? "the app didn't take it — press ⌘V"
+          : "no text field was focused"
+        indicator.display = .clipboardFallback(reason: reason)
         scheduleIndicatorHide(after: .seconds(2.5))
         // Password-field blocks carry a failure message and never reach the
         // note: that text stays in history only.
@@ -1405,12 +1430,16 @@ final class AppCoordinator {
   }
 
   private func scheduleIndicatorHide(after delay: Duration) {
-    Task { [weak self] in
+    // One tracked task: these were untracked and fired from ~25 call sites, so
+    // a stale hide from a finished dictation could pull the panel out from
+    // under a polish that had only just started.
+    indicatorHideTask?.cancel()
+    indicatorHideTask = Task { [weak self] in
       try? await Task.sleep(for: delay)
-      guard let self else { return }
-      // A new dictation may have started while the confirmation lingered.
+      guard let self, !Task.isCancelled else { return }
+      // Something new may have started while the confirmation lingered.
       switch self.indicator.display {
-      case .recording, .processing, .downloading:
+      case .recording, .processing, .downloading, .polishing:
         return
       default:
         self.indicator.display = .hidden

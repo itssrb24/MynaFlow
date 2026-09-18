@@ -13,6 +13,10 @@ public final class FocusedField {
 
   fileprivate init(element: AXUIElement) {
     self.element = element
+    // This is polled on the main thread for 15 s after every insertion, and
+    // the read is a synchronous call into another process. A hung target app
+    // would otherwise freeze hotkeys and the indicator along with it.
+    AXUIElementSetMessagingTimeout(element, 0.25)
   }
 
   public var value: String? {

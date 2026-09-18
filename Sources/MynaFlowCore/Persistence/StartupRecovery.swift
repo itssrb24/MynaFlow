@@ -3,6 +3,16 @@ import Foundation
 /// What to do when the history database will not open: move it aside with
 /// a timestamp so nothing is lost, and let the app start on a fresh one.
 public enum StartupRecovery {
+  /// Whether this open failure means the file itself is unusable, as opposed
+  /// to a full disk, a locked database, or a permissions failure — none of
+  /// which justify renaming someone's history out from under them.
+  public static func isCorruption(_ error: Error) -> Bool {
+    guard let store = error as? FlowStoreError else { return false }
+    let message = store.message.lowercased()
+    return message.contains("malformed") || message.contains("not a database")
+      || message.contains("corrupt") || message.contains("encrypted")
+  }
+
   public static func moveAsideURL(for database: URL, at date: Date) -> URL {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
