@@ -70,7 +70,12 @@ public actor DictationController {
   private let dependencies: DictationDependencies
   private var cleanupEnabled = true
   private var hints: @Sendable () async -> [String] = { [] }
-  private var appRule: @Sendable (String?) async -> AppRule? = { _ in nil }
+  /// Whether the cleaner adds a terminal period. One setting for every app.
+  private var terminalPeriod = true
+  /// Paste even when Accessibility cannot see the focused field. Canvas
+  /// editors such as Google Docs expose no text element at all, so without
+  /// this nothing ever reaches them.
+  private var pasteWhenUnseen = true
   /// Rewrites text in the style with this id; nil means "leave it alone"
   /// (model missing, timed out, or failed) — the cleaned text is inserted.
   private var polisher: @Sendable (UUID, String) async -> (text: String, styleName: String)? = { _, _ in nil }
@@ -102,8 +107,12 @@ public actor DictationController {
     hints = provider
   }
 
-  public func setAppRuleProvider(_ provider: @escaping @Sendable (String?) async -> AppRule?) {
-    appRule = provider
+  public func setTerminalPeriod(_ enabled: Bool) {
+    terminalPeriod = enabled
+  }
+
+  public func setPasteWhenUnseen(_ enabled: Bool) {
+    pasteWhenUnseen = enabled
   }
 
   public func setPolisher(
@@ -216,23 +225,18 @@ public actor DictationController {
     }
     let transcription = engineOutcome.result
 
-    let rule = await appRule(session?.targetApplication)
     let cleaned = cleaner.clean(
       transcription.text,
-      enabled: rule?.cleanupEnabled ?? cleanupEnabled,
-      terminalPunctuation: rule?.terminalPeriod ?? true)
+      enabled: cleanupEnabled,
+      terminalPunctuation: terminalPeriod)
     var text = cleaned.text
     guard !text.isEmpty else {
       await failDictation("Nothing recognized")
       return
     }
-    var styleApplied: String?
-    if let styleID = rule?.polishStyleID, let polished = await polisher(styleID, text),
-      !polished.text.isEmpty
-    {
-      text = polished.text
-      styleApplied = polished.styleName
-    }
+    // Polishing is always something the user asks for, by hotkey or button;
+    // a dictation is never rewritten on its own.
+    let styleApplied: String? = nil
     // The actor was suspended during transcription; a cancel may have landed
     // meanwhile. A cancelled dictation must produce no side effects at all.
     do {
@@ -248,7 +252,7 @@ public actor DictationController {
     var blockedBySecureField = false
     var onClipboard = false
     do {
-      switch try await dependencies.insert(text, rule?.pasteWhenUnseen ?? false) {
+      switch try await dependencies.insert(text, pasteWhenUnseen) {
       case .inserted, .replacedSelection, .pastedFromClipboard:
         insertionMethod = .ax
       case .copiedToClipboard:

@@ -66,7 +66,6 @@ final class AppCoordinator {
   private var activePolish: PolishEngine?
   // Main window state
   private(set) var styles: [Style] = []
-  private(set) var appRules: [AppRule] = []
   private(set) var hotkeyConfiguration: HotkeyConfiguration = .default
   private(set) var inputDevices: [AudioInputDevice] = []
   private(set) var selectedInputUID: String?
@@ -78,6 +77,10 @@ final class AppCoordinator {
   private(set) var typingWPM: Double = 40
   // Learning layer
   private(set) var learningEnabled = false
+  /// Whether cleanup adds a terminal period, everywhere.
+  private(set) var terminalPeriod = true
+  /// Paste even where Accessibility cannot see the focused field.
+  private(set) var pasteWhenUnseen = true
   // Preferences (B5–B9)
   private(set) var userFillers: [String] = []
   private(set) var indicatorPlacement: IndicatorPlacement = .bottomCenter
@@ -180,6 +183,8 @@ final class AppCoordinator {
       }
       await refreshVocabulary()
       learningEnabled = (try? await store.setting(forKey: "learning_enabled")) == "1"
+      terminalPeriod = (try? await store.setting(forKey: "terminal_period")) != "0"
+      pasteWhenUnseen = (try? await store.setting(forKey: "paste_when_unseen")) != "0"
       await refreshLearnedRules()
       userFillers = BiasTerms.split((try? await store.setting(forKey: "filler_words")) ?? "")
       if let raw = try? await store.setting(forKey: "indicator_placement"),
@@ -202,6 +207,8 @@ final class AppCoordinator {
 
       let controller = makeController(store: store, scratch: paths.scratch)
       await controller.setCleanupEnabled(cleanupEnabled)
+      await controller.setTerminalPeriod(terminalPeriod)
+      await controller.setPasteWhenUnseen(pasteWhenUnseen)
       session = makeSession(controller: controller, scratch: paths.scratch)
       await installController(controller)
       await refreshStyles()
@@ -331,10 +338,6 @@ final class AppCoordinator {
       await controller.setHintsProvider {
         let terms = (try? await store.vocabularyTerms().map(\.term)) ?? []
         return BiasTerms.sanitize(terms)
-      }
-      await controller.setAppRuleProvider { bundleID in
-        guard let bundleID else { return nil }
-        return try? await store.appRule(for: bundleID)
       }
       await controller.setPolisher { [weak self] styleID, text in
         await self?.polishText(text, styleID: styleID)
@@ -908,15 +911,27 @@ final class AppCoordinator {
   func refreshStyles() async {
     guard let store else { return }
     styles = (try? await store.styles()) ?? []
-    appRules = (try? await store.appRules()) ?? []
   }
 
-  // MARK: App rules
+  // MARK: Insertion and cleanup settings
 
-  func saveAppRule(_ rule: AppRule) {
+  func setTerminalPeriod(_ enabled: Bool) {
+    terminalPeriod = enabled
     Task {
-      await persist("save app rule") { try await store?.upsertAppRule(rule) }
-      await refreshStyles()
+      await persist("save terminal period") {
+        try await store?.setSetting(enabled ? "1" : "0", forKey: "terminal_period")
+      }
+      await controller?.setTerminalPeriod(enabled)
+    }
+  }
+
+  func setPasteWhenUnseen(_ enabled: Bool) {
+    pasteWhenUnseen = enabled
+    Task {
+      await persist("save paste when unseen") {
+        try await store?.setSetting(enabled ? "1" : "0", forKey: "paste_when_unseen")
+      }
+      await controller?.setPasteWhenUnseen(enabled)
     }
   }
 

@@ -44,13 +44,20 @@ private struct HookedEngine: SpeechEngine, TranscriptionProviding {
 private final class Recorder: @unchecked Sendable {
   private let lock = NSLock()
   private var _insertedTexts: [String] = []
+  private var _blindPasteFlags: [Bool] = []
   private var _clipboardTexts: [String] = []
   private var _clearedTarget = false
 
-  func recordInsert(_ text: String) {
+  func recordInsert(_ text: String, blindPaste: Bool = false) {
     lock.lock()
     _insertedTexts.append(text)
+    _blindPasteFlags.append(blindPaste)
     lock.unlock()
+  }
+  var blindPasteFlags: [Bool] {
+    lock.lock()
+    defer { lock.unlock() }
+    return _blindPasteFlags
   }
   func recordClipboard(_ text: String) {
     lock.lock()
@@ -95,8 +102,8 @@ private func makeController(
     dependencies: DictationDependencies(
       captureTarget: { "com.apple.TextEdit" },
       clearTarget: { recorder.recordClear() },
-      insert: { text, _ in
-        recorder.recordInsert(text)
+      insert: { text, allowBlindPaste in
+        recorder.recordInsert(text, blindPaste: allowBlindPaste)
         return try insertOutcome(text)
       },
       copyToClipboard: { text in
@@ -105,45 +112,62 @@ private func makeController(
       }))
 }
 
-@Suite("DictationController app rules")
-struct DictationControllerAppRuleTests {
-  @Test("A rule with a polish style rewrites before insertion and records the style")
-  func rulePolishes() async throws {
+@Suite("DictationController global settings")
+struct DictationControllerSettingsTests {
+  @Test("Cleanup off inserts the raw transcript")
+  func cleanupOff() async throws {
     let store = FakeStore()
     let recorder = Recorder()
     let controller = makeController(store: store, recorder: recorder)
-    let styleID = UUID()
-    await controller.setAppRuleProvider { app in
-      app == "com.apple.TextEdit" ? AppRule(bundleID: app!, polishStyleID: styleID) : nil
-    }
-    await controller.setPolisher { id, text in
-      id == styleID ? (text: "Greetings.", styleName: "Formal") : nil
-    }
+    await controller.setCleanupEnabled(false)
     _ = await controller.startDictation(mode: .hold)
     await controller.finishRecording(frames: someFrames())
-    #expect(recorder.insertedTexts == ["Greetings."])
-    let record = try #require(await store.records.first)
-    #expect(record.finalText == "Greetings.")
-    #expect(record.cleanedText == "Hello there.")
-    #expect(record.styleApplied == "Formal")
+    #expect(recorder.insertedTexts == ["um hello there"])
   }
 
-  @Test("A failed polish inserts the cleaned text; a cleanup-off rule inserts the raw text")
-  func ruleFallbacks() async throws {
+  @Test("The terminal period is one setting, applied to every app")
+  func terminalPeriodAppliesEverywhere() async throws {
     let store = FakeStore()
     let recorder = Recorder()
     let controller = makeController(store: store, recorder: recorder)
-    await controller.setAppRuleProvider { app in AppRule(bundleID: app!, polishStyleID: UUID()) }
-    await controller.setPolisher { _, _ in nil }
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    #expect(recorder.insertedTexts.last == "Hello there.")
+
+    await controller.setTerminalPeriod(false)
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    #expect(recorder.insertedTexts.last == "Hello there")
+  }
+
+  @Test("Blind paste defaults on, so canvas editors are reachable out of the box")
+  func blindPasteDefaultsOn() async throws {
+    // This is the setting that decides whether anything ever reaches an editor
+    // that exposes no text element, such as Google Docs. Defaulting it off
+    // made dictation into those apps silently stop at the clipboard.
+    let store = FakeStore()
+    let recorder = Recorder()
+    let controller = makeController(store: store, recorder: recorder)
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    #expect(recorder.blindPasteFlags == [true])
+
+    await controller.setPasteWhenUnseen(false)
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    #expect(recorder.blindPasteFlags.last == false)
+  }
+
+  @Test("A dictation is never polished on its own")
+  func noAutomaticPolish() async throws {
+    let store = FakeStore()
+    let recorder = Recorder()
+    let controller = makeController(store: store, recorder: recorder)
+    await controller.setPolisher { _, _ in (text: "Greetings.", styleName: "Formal") }
     _ = await controller.startDictation(mode: .hold)
     await controller.finishRecording(frames: someFrames())
     #expect(recorder.insertedTexts == ["Hello there."])
-
-    await controller.setAppRuleProvider { app in AppRule(bundleID: app!, cleanupEnabled: false) }
-    _ = await controller.startDictation(mode: .hold)
-    await controller.finishRecording(frames: someFrames())
-    #expect(recorder.insertedTexts.last == "um hello there")
-    #expect(await store.records.last?.styleApplied == nil)
+    #expect(await store.records.first?.styleApplied == nil)
   }
 }
 

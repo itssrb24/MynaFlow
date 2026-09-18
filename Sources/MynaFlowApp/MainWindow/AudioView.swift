@@ -55,6 +55,42 @@ struct AudioView: View {
               .font(Theme.Fonts.caption)
               .foregroundStyle(Theme.Colors.textTertiary)
           }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toggleStyle(.switch)
+        .tint(Theme.Colors.accent)
+
+        Toggle(isOn: Binding(
+          get: { coordinator.terminalPeriod },
+          set: { coordinator.setTerminalPeriod($0) })
+        ) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("End each dictation with a period")
+              .font(Theme.Fonts.bodyStrong)
+              .foregroundStyle(Theme.Colors.textPrimary)
+            Text("Off suits chat and terminals, where a trailing period is noise.")
+              .font(Theme.Fonts.caption)
+              .foregroundStyle(Theme.Colors.textTertiary)
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toggleStyle(.switch)
+        .tint(Theme.Colors.accent)
+
+        SectionLabel(text: "Insertion")
+        Toggle(isOn: Binding(
+          get: { coordinator.pasteWhenUnseen },
+          set: { coordinator.setPasteWhenUnseen($0) })
+        ) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Paste even when the text field cannot be seen")
+              .font(Theme.Fonts.bodyStrong)
+              .foregroundStyle(Theme.Colors.textPrimary)
+            Text("Some editors, like Google Docs, draw their own canvas and expose no text field to macOS. Without this, dictation into them only reaches the clipboard. A field that can be seen is still never a password field — that check is unaffected.")
+              .font(Theme.Fonts.caption)
+              .foregroundStyle(Theme.Colors.textTertiary)
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
         }
         .toggleStyle(.switch)
         .tint(Theme.Colors.accent)

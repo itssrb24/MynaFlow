@@ -63,9 +63,11 @@ struct MigrationUpgradeTests {
     #expect(styles.count == Set(styles.map(\.name)).count, "built-in styles were duplicated")
     #expect(styles.contains { $0.name == "Casual" })
 
-    // And the new tables are usable immediately.
-    try await store.upsertAppRule(AppRule(bundleID: "com.apple.TextEdit", terminalPeriod: false))
-    #expect(try await store.appRule(for: "com.apple.TextEdit")?.terminalPeriod == false)
+    // Per-app rules were removed in v7: the table goes, and the settings that
+    // replaced it round-trip.
+    #expect(await store.schemaVersion() == FlowStore.migrations.count)
+    try await store.setSetting("0", forKey: "terminal_period")
+    #expect(try await store.setting(forKey: "terminal_period") == "0")
     await store.close()
   }
 

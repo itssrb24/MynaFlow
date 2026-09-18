@@ -124,9 +124,14 @@ from the app you are typing in.
 
 ### Dictate into anything
 
-Text is typed straight into the focused field using macOS accessibility. When an
-app exposes no text field &mdash; Google Docs draws its own canvas, for instance
-&mdash; you can allow a paste for that one app, and only that app.
+Text is typed straight into the focused field using macOS accessibility. Some
+editors draw their own canvas and expose no text field at all &mdash; Google
+Docs is the common one &mdash; so Myna Flow pastes into those instead. There is
+nothing to configure per app: one set of settings applies everywhere.
+
+<p align="center">
+  <img src="docs/images/settings.png" width="700" alt="The Audio and General page with cleanup, terminal period and insertion settings that apply to every app">
+</p>
 
 ### Clean up what you actually said
 
@@ -141,8 +146,7 @@ rewrites it. Casual, Formal, Concise, or your own. It uses a language model you
 download explicitly and which runs locally. Nothing is polished unless you ask.
 
 <p align="center">
-  <img src="docs/images/styles.png" width="420" alt="The Styles page listing Casual, Formal, Concise and a custom Bullet points style">
-  <img src="docs/images/apps.png" width="420" alt="The Apps page with per-application rules for cleanup, trailing period and automatic polish">
+  <img src="docs/images/styles.png" width="560" alt="The Styles page listing Casual, Formal, Concise and a custom Bullet points style">
 </p>
 
 ### Teach it your words
@@ -324,7 +328,7 @@ item unless you switch one on.
 |---|---|
 | The shortcut does nothing | Quit Myna Flow from the menu bar and reopen it. Global shortcuts only bind once Accessibility is granted. |
 | Text lands in the wrong app | Click where you want the text *before* you start dictating. |
-| Nothing is inserted in Google Docs | Docs exposes no text field. Open **Apps**, add Chrome, and allow pasting for it. |
+| Nothing is inserted in Google Docs | Check **Audio** ▸ *Paste even when the text field cannot be seen* is on. Docs exposes no text field, so this is the only way text reaches it. |
 | Dictation feels slow | Switch to Apple Speech in **Models**, or keep dictations shorter. |
 
 Still stuck? Open Myna Flow &#9654; **Audio** &#9654; **Export diagnostics...**
