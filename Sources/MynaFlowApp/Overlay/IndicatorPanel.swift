@@ -291,91 +291,76 @@ struct IndicatorView: View {
       ? .easeOut(duration: 0.12) : .spring(response: 0.34, dampingFraction: 0.9)
   }
 
-  /// Real glass: an `NSVisualEffectView` blurring whatever is behind the
-  /// window, then coloured rather than darkened.
+  /// Apple's glass, not a coloured pane: a frosted sheet that takes its
+  /// colour from whatever is behind it rather than staining it.
   ///
-  /// Nothing here is black. A pane held back with black loses its hue and
-  /// reads as a smoked chip; the same luminance carried by a deep version of
-  /// the state's own colour reads as tinted glass you can see through. So the
-  /// veil, the tint and even the shadow all come from one hue per state.
+  /// The body is a near-neutral graphite — warm enough never to be flat black,
+  /// but carrying no hue of its own — so the wallpaper, the document, the
+  /// window underneath all read through. State lives in a whisper of tint and
+  /// in the coloured glyph beside the text, not in a wash over the pane.
   ///
-  /// Edges are what sell it: a light-catching hairline, brighter along the
-  /// top, over an inner shadow that gives the pane thickness, under a sheen
-  /// as if it were lit from above.
+  /// The rim is the signature. A hairline that catches light along the top
+  /// edge and fades around the curve, over a sheen just inside it, is what
+  /// separates a sheet of glass from a rounded rectangle with a blur.
   private var glass: some View {
     let shape = RoundedRectangle(cornerRadius: 26, style: .continuous)
-    let palette = self.palette
+    let accent = stateTint
     let tint = LinearGradient(
       colors: [
-        palette.tint.opacity(palette.tintOpacity),
-        palette.tint.opacity(palette.tintOpacity * 0.45),
-        palette.tint.opacity(palette.tintOpacity * 0.70),
+        accent.color.opacity(accent.opacity),
+        accent.color.opacity(accent.opacity * 0.40),
+        accent.color.opacity(accent.opacity * 0.65),
       ],
       startPoint: .topLeading, endPoint: .bottomTrailing)
-    let sheen = LinearGradient(
-      colors: [.white.opacity(0.20), .white.opacity(0.05), .clear],
-      startPoint: .top, endPoint: .center)
     let rim = LinearGradient(
-      colors: [.white.opacity(0.45), .white.opacity(0.13), .white.opacity(0.06)],
+      colors: [
+        .white.opacity(Self.rimStrength),
+        .white.opacity(Self.rimStrength * 0.30),
+        .white.opacity(Self.rimStrength * 0.15),
+      ],
       startPoint: .top, endPoint: .bottom)
-    let innerMask = LinearGradient(
-      colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+    let sheen = LinearGradient(
+      colors: [.white.opacity(0.22), .white.opacity(0.045), .clear],
+      startPoint: .top, endPoint: .center)
 
     let blurred = shape.fill(Color.clear)
       .background(GlassBackdrop().clipShape(shape))
-    let veiled = blurred.overlay(shape.fill(palette.deep.opacity(palette.deepOpacity)))
+    let veiled = blurred.overlay(shape.fill(Self.graphite.opacity(Self.veilStrength)))
     let tinted = veiled.overlay(shape.fill(tint))
     let lit = tinted.overlay(shape.fill(sheen))
-    let thick = lit.overlay(
-      shape.stroke(palette.deep.opacity(0.45), lineWidth: 2)
-        .blur(radius: 2)
-        .mask(shape.fill(innerMask)))
-    return thick
+    return lit
       .overlay(shape.strokeBorder(rim, lineWidth: 1))
-      .shadow(color: palette.deep.opacity(0.38), radius: 18, y: 8)
+      .shadow(color: Self.graphite.opacity(0.40), radius: 20, y: 8)
       .allowsHitTesting(false)
   }
 
-  /// One hue per state, in two strengths: a deep version that holds white
-  /// content against a white page, and a bright one that colours the pane.
-  /// While you are speaking, your voice drives the bright one.
-  private struct GlassPalette {
-    var deep: Color
-    var deepOpacity: Double
-    var tint: Color
-    var tintOpacity: Double
-  }
+  /// A warm near-neutral. Never `.black`: a pane held back with pure black
+  /// goes flat and grey, and stops reading as glass at all.
+  private static let graphite = Color(red: 0.115, green: 0.108, blue: 0.098)
+  /// How much the sheet holds back what is behind it. The floor that keeps
+  /// white content legible over a white page.
+  private static let veilStrength: Double = 0.22
+  private static let rimStrength: Double = 0.48
 
-  private var palette: GlassPalette {
-    // Warm umber and amber: the app's brass accent taken to both ends.
-    let umber = Color(red: 0.13, green: 0.095, blue: 0.055)
-    let amber = Color(red: 0.98, green: 0.74, blue: 0.36)
+  /// A whisper of the state's colour — enough that the sheet warms while you
+  /// speak, far too little to stain it. The state itself is carried by the
+  /// glyph beside the text.
+  private var stateTint: (color: Color, opacity: Double) {
     switch model.display {
     case .recording(.hold):
-      return GlassPalette(
-        deep: umber, deepOpacity: 0.14, tint: amber,
-        tintOpacity: 0.34 + 0.18 * model.orbLevel)
+      return (Theme.Colors.accent, 0.05 + 0.09 * model.orbLevel)
     case .recording(.toggle):
-      return GlassPalette(
-        deep: Color(red: 0.17, green: 0.085, blue: 0.030), deepOpacity: 0.14,
-        tint: Color(red: 1.0, green: 0.62, blue: 0.26),
-        tintOpacity: 0.38 + 0.16 * model.orbLevel)
-    case .processing:
-      return GlassPalette(deep: umber, deepOpacity: 0.14, tint: amber, tintOpacity: 0.34)
+      return (.orange, 0.07 + 0.08 * model.orbLevel)
+    case .processing, .downloading:
+      return (Theme.Colors.accent, 0.05)
     case .polishing:
-      return GlassPalette(deep: umber, deepOpacity: 0.14, tint: amber, tintOpacity: 0.40)
+      return (Theme.Colors.accent, 0.07)
     case .error:
-      return GlassPalette(
-        deep: Color(red: 0.17, green: 0.055, blue: 0.045), deepOpacity: 0.16,
-        tint: Color(red: 1.0, green: 0.44, blue: 0.38), tintOpacity: 0.42)
+      return (.red, 0.10)
     case .success, .clipboardFallback:
-      return GlassPalette(
-        deep: Color(red: 0.055, green: 0.135, blue: 0.085), deepOpacity: 0.14,
-        tint: Color(red: 0.46, green: 0.93, blue: 0.62), tintOpacity: 0.34)
-    case .downloading:
-      return GlassPalette(deep: umber, deepOpacity: 0.12, tint: amber, tintOpacity: 0.28)
+      return (.green, 0.07)
     case .hidden:
-      return GlassPalette(deep: umber, deepOpacity: 0, tint: amber, tintOpacity: 0)
+      return (Theme.Colors.accent, 0)
     }
   }
 
