@@ -7,6 +7,7 @@ struct InsightsView: View {
   @State private var period: InsightsPeriod = .week
   @State private var insights: Insights?
   @State private var typingWPMText = ""
+  @State private var confirmClear = false
 
   var body: some View {
     Page(title: "Insights", subtitle: "What dictation is doing for you.") {
@@ -17,6 +18,9 @@ struct InsightsView: View {
         .pickerStyle(.segmented)
         .frame(maxWidth: 360)
         Spacer()
+        Button("Clear stats…") { confirmClear = true }
+          .buttonStyle(NeuButtonStyle())
+          .font(Theme.Fonts.caption)
         HStack(spacing: Theme.Spacing.sm) {
           Text("Typing speed").font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
           TextField("40", text: $typingWPMText)
@@ -28,6 +32,21 @@ struct InsightsView: View {
             .onSubmit { commitTypingSpeed() }
           Text("WPM").font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
         }
+      }
+
+      if let floor = coordinator.insightsFloor {
+        HStack(spacing: Theme.Spacing.sm) {
+          Image(systemName: "clock.arrow.2.circlepath").foregroundStyle(Theme.Colors.textTertiary)
+          Text("Counting from \(floor.formatted(date: .abbreviated, time: .shortened)). Your history is untouched.")
+            .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
+          Spacer()
+          Button("Count everything again") {
+            Task { await coordinator.restoreInsights(); await reload() }
+          }
+          .buttonStyle(NeuButtonStyle())
+          .font(Theme.Fonts.caption)
+        }
+        .inset(padding: Theme.Spacing.sm)
       }
 
       if let insights {
@@ -128,6 +147,16 @@ struct InsightsView: View {
       await reload()
     }
     .onChange(of: period) { Task { await reload() } }
+    .confirmationDialog(
+      "Start the numbers over?", isPresented: $confirmClear, titleVisibility: .visible
+    ) {
+      Button("Clear stats") {
+        Task { await coordinator.resetInsights(); await reload() }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("Insights will count only from now on. Nothing is deleted — your dictations stay in History, and you can undo this at any time.")
+    }
   }
 
   private var emptyNote: some View {

@@ -6,7 +6,7 @@ import MynaFlowCore
 /// character-emitting chords.
 @MainActor
 final class GlobalHotkeyMonitor {
-  private var configuration: HotkeyConfiguration
+  private var router: HotkeyRouter
   private let onHoldDown: () -> Void
   private let onHoldUp: () -> Void
   private let onToggle: () -> Void
@@ -15,10 +15,6 @@ final class GlobalHotkeyMonitor {
   private let onStyle: (HotkeyAction) -> Void
   private var globalMonitors: [Any] = []
   private var localMonitor: Any?
-  private var holdActive = false
-  /// True when the current hold was started by a modifier-only shortcut —
-  /// its release is detected on flagsChanged, not keyUp.
-  private var holdViaModifiers = false
 
   init(
     configuration: HotkeyConfiguration,
@@ -29,7 +25,7 @@ final class GlobalHotkeyMonitor {
     onChordAbort: @escaping () -> Void,
     onStyle: @escaping (HotkeyAction) -> Void = { _ in }
   ) {
-    self.configuration = configuration
+    router = HotkeyRouter(configuration: configuration)
     self.onHoldDown = onHoldDown
     self.onHoldUp = onHoldUp
     self.onToggle = onToggle
@@ -39,13 +35,7 @@ final class GlobalHotkeyMonitor {
   }
 
   func update(configuration: HotkeyConfiguration) {
-    self.configuration = configuration
-    // Remapping while a hold is active must not strand the microphone open.
-    if holdActive {
-      holdActive = false
-      holdViaModifiers = false
-      onHoldUp()
-    }
+    apply(router.updateConfiguration(configuration))
   }
 
   func install() {
@@ -80,85 +70,30 @@ final class GlobalHotkeyMonitor {
   private func handle(_ event: NSEvent) {
     let flags = HotkeyShortcut.normalized(
       event.modifierFlags.intersection(.deviceIndependentFlagsMask).rawValue)
-
-    if event.type == .flagsChanged {
-      handleFlagsChanged(current: flags)
+    let input: HotkeyInput
+    switch event.type {
+    case .flagsChanged:
+      input = .flagsChanged(modifiers: flags)
+    case .keyDown:
+      input = .keyDown(keyCode: event.keyCode, modifiers: flags, isRepeat: event.isARepeat)
+    case .keyUp:
+      input = .keyUp(keyCode: event.keyCode)
+    default:
       return
     }
-
-    // Chord guard first: a character key arriving during a modifier-only
-    // hold means the user was typing a regular shortcut (⌃C, ⌘S…), not
-    // dictating — abort so bare-modifier push-to-talk doesn't hijack every
-    // OS shortcut that shares its modifier. Must precede the cancel and
-    // style branches, or a style chord during a ⌃-hold leaves the mic open.
-    if event.type == .keyDown, !event.isARepeat, holdViaModifiers {
-      holdActive = false
-      holdViaModifiers = false
-      onChordAbort()
-      return
-    }
-    if event.type == .keyDown,
-      configuration[.cancel]?.matches(keyCode: event.keyCode, modifiers: flags) == true
-    {
-      onCancel()
-      return
-    }
-    // Single-press actions (styles, undo, re-insert) are live whenever the
-    // app is running.
-    if event.type == .keyDown, !event.isARepeat {
-      for action in HotkeyAction.styleActions + [.undoLast, .reinsertLast, .openScratchpad]
-      where configuration[action]?.matches(keyCode: event.keyCode, modifiers: flags) == true {
-        onStyle(action)
-        return
-      }
-    }
-    if event.type == .keyDown, !event.isARepeat {
-      if configuration[.dictationHold]?.matches(keyCode: event.keyCode, modifiers: flags) == true,
-        !holdActive
-      {
-        holdActive = true
-        onHoldDown()
-      }
-      if configuration[.dictationToggle]?.matches(keyCode: event.keyCode, modifiers: flags) == true {
-        onToggle()
-      }
-    } else if event.type == .keyUp {
-      if holdActive, !holdViaModifiers,
-        event.keyCode == configuration[.dictationHold]?.keyCode
-      {
-        holdActive = false
-        onHoldUp()
-      }
-    }
+    apply(router.route(input))
   }
 
-  /// Modifier-only shortcuts: press edge = the held modifier set exactly
-  /// equals the shortcut's set; release edge = any modifier of that set lifts.
-  private func handleFlagsChanged(current flags: UInt) {
-    // Release edge first, so ⌃ → ⌃⌥ transitions can't double-trigger.
-    if holdViaModifiers, let hold = configuration[.dictationHold],
-      !contains(flags, all: hold.modifiers)
-    {
-      holdActive = false
-      holdViaModifiers = false
-      onHoldUp()
+  private func apply(_ effects: [HotkeyEffect]) {
+    for effect in effects {
+      switch effect {
+      case .holdDown: onHoldDown()
+      case .holdUp: onHoldUp()
+      case .toggle: onToggle()
+      case .cancel: onCancel()
+      case .chordAbort: onChordAbort()
+      case .action(let action): onStyle(action)
+      }
     }
-
-    if configuration[.cancel]?.matchesModifiers(flags) == true {
-      onCancel()
-      return
-    }
-    if configuration[.dictationHold]?.matchesModifiers(flags) == true, !holdActive {
-      holdActive = true
-      holdViaModifiers = true
-      onHoldDown()
-    }
-    if configuration[.dictationToggle]?.matchesModifiers(flags) == true {
-      onToggle()
-    }
-  }
-
-  private func contains(_ flags: UInt, all required: UInt) -> Bool {
-    flags & required == required
   }
 }

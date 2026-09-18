@@ -83,6 +83,9 @@ final class AppCoordinator {
   private(set) var indicatorPlacement: IndicatorPlacement = .bottomCenter
   private(set) var soundFeedback = false
   private(set) var scratchpadEnabled = true
+  /// "Start my stats over" marker: insights ignore anything before it, and
+  /// nothing is deleted — History still has every row.
+  private(set) var insightsFloor: Date?
   private let scratchpadModel = ScratchpadModel()
   private var scratchpad: ScratchpadPanelController?
   private var scratchpadTarget: NSRunningApplication?
@@ -169,6 +172,9 @@ final class AppCoordinator {
       }
       soundFeedback = (try? await store.setting(forKey: "sound_feedback")) == "1"
       scratchpadEnabled = (try? await store.setting(forKey: "scratchpad_enabled")) != "0"
+      if let raw = try? await store.setting(forKey: "insights_reset_at"), let seconds = Double(raw) {
+        insightsFloor = Date(timeIntervalSince1970: seconds)
+      }
       if let raw = try? await store.setting(forKey: "toggle_max_minutes"), let value = Int(raw), value > 0 {
         toggleMaximumMinutes = value
       }
@@ -463,12 +469,29 @@ final class AppCoordinator {
 
   // MARK: - Insights + vocabulary
 
+  /// Resets the numbers without touching the dictations behind them, so it
+  /// is always reversible. Deleting the rows themselves is History ▸ Delete.
+  func resetInsights() async {
+    let now = Date()
+    insightsFloor = now
+    await persist("reset insights") {
+      try await store?.setSetting("\(now.timeIntervalSince1970)", forKey: "insights_reset_at")
+    }
+  }
+
+  func restoreInsights() async {
+    insightsFloor = nil
+    await persist("restore insights") {
+      try await store?.setSetting("", forKey: "insights_reset_at")
+    }
+  }
+
   func loadInsights(period: InsightsPeriod) async -> Insights {
     guard let store else {
       return InsightsAggregator.aggregate([], typingWPM: typingWPM, period: period)
     }
     do {
-      return try await store.insights(typingWPM: typingWPM, period: period)
+      return try await store.insights(typingWPM: typingWPM, period: period, floor: insightsFloor)
     } catch {
       Self.log.error("insights failed: \(error)")
       return InsightsAggregator.aggregate([], typingWPM: typingWPM, period: period)

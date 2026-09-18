@@ -196,17 +196,49 @@ public actor FlowStore {
 
   /// Deletes rows at or after `cutoff`; returns how many.
   @discardableResult
+  /// Corrections carry the user's own before/after text and reference the
+  /// dictation they came from, so deleting history has to take them with it —
+  /// both for the foreign key and because leaving that text behind would
+  /// quietly defeat "delete my history".
   public func deleteDictations(since cutoff: Date) throws -> Int {
-    try run(
-      "DELETE FROM dictations WHERE timestamp >= ?1",
-      bind: { sqlite3_bind_double($0, 1, cutoff.timeIntervalSince1970) })
-    return Int(sqlite3_changes(try requireHandle()))
+    let seconds = cutoff.timeIntervalSince1970
+    return try inTransaction {
+      try run(
+        """
+        DELETE FROM corrections WHERE dictation_id IN
+          (SELECT id FROM dictations WHERE timestamp >= ?1)
+        """,
+        bind: { sqlite3_bind_double($0, 1, seconds) })
+      try run(
+        "DELETE FROM dictations WHERE timestamp >= ?1",
+        bind: { sqlite3_bind_double($0, 1, seconds) })
+      return Int(sqlite3_changes(try requireHandle()))
+    }
   }
 
   public func deleteDictation(id: UUID) throws {
-    try run(
-      "DELETE FROM dictations WHERE id = ?1",
-      bind: { sqlite3_bind_text($0, 1, id.uuidString, -1, sqliteTransient) })
+    let key = id.uuidString
+    try inTransaction {
+      try run(
+        "DELETE FROM corrections WHERE dictation_id = ?1",
+        bind: { sqlite3_bind_text($0, 1, key, -1, sqliteTransient) })
+      try run(
+        "DELETE FROM dictations WHERE id = ?1",
+        bind: { sqlite3_bind_text($0, 1, key, -1, sqliteTransient) })
+    }
+  }
+
+  /// Runs `body` inside an immediate transaction, rolling back on any throw.
+  private func inTransaction<T>(_ body: () throws -> T) throws -> T {
+    try executeSQL("BEGIN IMMEDIATE")
+    do {
+      let value = try body()
+      try executeSQL("COMMIT")
+      return value
+    } catch {
+      try? executeSQL("ROLLBACK")
+      throw error
+    }
   }
 
   /// Bundle identifiers that appear in history, most frequent first.
@@ -403,11 +435,15 @@ public actor FlowStore {
 
   // MARK: - Insights (aggregated in SQL so 100k rows never load into memory)
 
+  /// `floor` is the user's "start my stats over" marker: a display cutoff
+  /// that hides earlier dictations from the numbers without deleting them.
   public func insights(
     typingWPM: Double, now: Date = Date(), calendar: Calendar = .current,
-    period: InsightsPeriod = .all
+    period: InsightsPeriod = .all, floor: Date? = nil
   ) throws -> Insights {
-    let since = period.since(now: now, calendar: calendar)?.timeIntervalSince1970 ?? -Double.infinity
+    let periodSince = period.since(now: now, calendar: calendar)?.timeIntervalSince1970
+      ?? -Double.infinity
+    let since = max(periodSince, floor?.timeIntervalSince1970 ?? -Double.infinity)
     let bind: (OpaquePointer) -> Void = { sqlite3_bind_double($0, 1, since) }
 
     struct Totals { var words = 0; var count = 0; var seconds = 0.0; var fallbacks = 0; var msSum = 0 }

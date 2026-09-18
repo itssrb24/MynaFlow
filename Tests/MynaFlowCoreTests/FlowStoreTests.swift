@@ -33,6 +33,58 @@ struct FlowStoreTests {
     )
   }
 
+  @Test("Deleting history also removes the corrections that reference it")
+  func deleteHistoryWithCorrections() async throws {
+    let store = try await FlowStore.open(at: temporaryDatabaseURL())
+    let record = makeRecord()
+    try await store.insert(record)
+    _ = try await store.logCorrection(
+      CorrectionPair(before: "So this is a test.", after: "So this is a test!"),
+      dictationID: record.id)
+    #expect(try await store.allCorrections().isEmpty == false)
+
+    // A foreign key from corrections used to abort the whole delete.
+    let deleted = try await store.deleteDictations(since: Date(timeIntervalSince1970: 0))
+    #expect(deleted == 1)
+    #expect(try await store.recentDictations(limit: 10).isEmpty)
+    #expect(try await store.allCorrections().isEmpty)
+    await store.close()
+  }
+
+  @Test("Deleting one dictation removes its corrections too")
+  func deleteSingleDictationWithCorrections() async throws {
+    let store = try await FlowStore.open(at: temporaryDatabaseURL())
+    let kept = makeRecord()
+    let doomed = makeRecord()
+    try await store.insert(kept)
+    try await store.insert(doomed)
+    _ = try await store.logCorrection(
+      CorrectionPair(before: "So this is a test.", after: "So this is a test!"),
+      dictationID: doomed.id)
+    try await store.deleteDictation(id: doomed.id)
+    #expect(try await store.recentDictations(limit: 10).map(\.id) == [kept.id])
+    #expect(try await store.allCorrections().isEmpty)
+    await store.close()
+  }
+
+  @Test("Insights can be floored at a reset marker without deleting anything")
+  func insightsFloor() async throws {
+    let store = try await FlowStore.open(at: temporaryDatabaseURL())
+    let old = Date(timeIntervalSince1970: 1_000_000)
+    let recent = Date(timeIntervalSince1970: 2_000_000)
+    try await store.insert(makeRecord(timestamp: old))
+    try await store.insert(makeRecord(timestamp: recent))
+
+    let all = try await store.insights(typingWPM: 40, now: recent, period: .all)
+    #expect(all.totalDictations == 2)
+    let floored = try await store.insights(
+      typingWPM: 40, now: recent, period: .all, floor: Date(timeIntervalSince1970: 1_500_000))
+    #expect(floored.totalDictations == 1)
+    // The rows themselves are untouched — this is a display floor, not a delete.
+    #expect(try await store.recentDictations(limit: 10).count == 2)
+    await store.close()
+  }
+
   @Test("Opening re-tightens a loosened data directory to 0700")
   func reassertsDirectoryPermissions() async throws {
     let url = temporaryDatabaseURL()

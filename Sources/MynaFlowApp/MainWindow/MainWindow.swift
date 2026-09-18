@@ -1,13 +1,13 @@
 import SwiftUI
 
 enum MainSection: String, CaseIterable, Identifiable {
-  case history, insights, styles, apps, vocabulary, learning, hotkeys, audio, models
+  case insights, history, styles, apps, vocabulary, learning, hotkeys, audio, models
   var id: String { rawValue }
 
   var title: String {
     switch self {
-    case .history: "History"
     case .insights: "Insights"
+    case .history: "History"
     case .styles: "Styles"
     case .apps: "Apps"
     case .vocabulary: "Vocabulary"
@@ -20,8 +20,8 @@ enum MainSection: String, CaseIterable, Identifiable {
 
   var symbol: String {
     switch self {
-    case .history: "clock.arrow.circlepath"
     case .insights: "chart.bar.xaxis"
+    case .history: "clock.arrow.circlepath"
     case .styles: "wand.and.sparkles"
     case .apps: "macwindow.on.rectangle"
     case .vocabulary: "character.book.closed"
@@ -35,7 +35,7 @@ enum MainSection: String, CaseIterable, Identifiable {
 
 struct MainWindowView: View {
   let coordinator: AppCoordinator
-  @State private var section: MainSection = .history
+  @State private var section: MainSection = .insights
 
   var body: some View {
     HStack(spacing: 0) {
@@ -78,8 +78,8 @@ struct MainWindowView: View {
   @ViewBuilder
   private var content: some View {
     switch section {
-    case .history: HistoryView(coordinator: coordinator)
     case .insights: InsightsView(coordinator: coordinator)
+    case .history: HistoryView(coordinator: coordinator)
     case .styles: StylesView(coordinator: coordinator)
     case .apps: AppRulesView(coordinator: coordinator)
     case .vocabulary: VocabularyView(coordinator: coordinator)
