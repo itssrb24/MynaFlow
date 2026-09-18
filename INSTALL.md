@@ -1,42 +1,73 @@
 # Installing Myna Flow
 
-## Before you start
-
 **You need macOS 26 or later.** Apple menu ▸ About This Mac tells you which
-version you have. On anything older this app will not run at all.
+version you have. On anything older this app will not run at all — dictation
+uses a system component that only exists from macOS 26.
 
-## Install
+There are two ways in. Pick one.
 
-1. Unzip **Myna Flow.zip**.
+---
+
+## Option A — download it (easiest)
+
+1. Download **MynaFlow-1.0.0.zip** and unzip it.
 2. Drag **Myna Flow** into your **Applications** folder.
 3. **Right-click** (or Control-click) the app and choose **Open**.
 4. macOS says it cannot verify the developer. Click **Open**.
 
-Step 3 matters. Double-clicking the first time gives you a dialog with no way
-forward; right-click ▸ Open is the one that offers the Open button. You only
-have to do it once — after that it launches normally.
+Step 3 matters: double-clicking the first time gives you a dialog with no way
+forward, and right-click ▸ Open is the one that offers the Open button. You
+only do this once.
 
-### Why the warning appears
+### Why that warning appears
 
-Apple charges $99 a year for the certificate that removes it. This app is
-signed, but not with that certificate, so macOS tells you it could not verify
-who made it. The warning is about who paid Apple, not about what the app does.
+macOS stamps every downloaded file with a quarantine flag, and it will only
+open a quarantined app without complaint if the developer paid Apple $99 a
+year to have it notarized. This app is properly signed, just not notarized, so
+you get one warning. It is about who paid Apple, not about what the app does.
 
-Do not run any `sudo` or `xattr` command you find online to silence warnings
-like this. That habit is exactly what malware relies on. Right-click ▸ Open is
-the button Apple provides for this, and it is enough.
+**Do not run `xattr` or `sudo` commands you find online to silence warnings
+like this.** Getting comfortable with that is exactly what malware relies on.
+Right-click ▸ Open is the button Apple provides, and it is enough.
 
-## First run
+---
 
-Myna Flow lives in the menu bar and has no Dock icon. It walks you through:
+## Option B — build it yourself (no warning at all)
+
+An app built on your own Mac was never downloaded, so it never gets the
+quarantine flag, so there is no warning. You also get to read exactly what
+you are running first.
+
+You need **Xcode** from the App Store — it is a large download, so this path
+suits you if you are comfortable in Terminal.
+
+```bash
+git clone https://github.com/itssrb24/MynaFlow.git
+cd MynaFlow
+./Scripts/install.sh
+```
+
+The script checks your macOS version, builds the app, installs it to
+Applications, and opens it. To update later:
+
+```bash
+git pull && ./Scripts/install.sh
+```
+
+---
+
+## First run, either way
+
+Myna Flow lives in the menu bar and has no Dock icon. It will walk you
+through:
 
 1. **Microphone** — so it can hear you.
 2. **Accessibility** — so it can type into other apps. macOS opens System
    Settings; switch Myna Flow on, then come back.
 3. A first dictation, to prove it works.
 
-If the shortcut does nothing right after granting Accessibility, quit Myna Flow
-from the menu bar and open it again.
+If the shortcut does nothing right after you grant Accessibility, quit Myna
+Flow from the menu bar and open it again.
 
 ## Using it
 
@@ -45,6 +76,21 @@ from the menu bar and open it again.
 - **Esc** cancels.
 - Everything you dictate is kept in History, on your Mac, and can be deleted
   from there.
+
+## Does it phone home?
+
+No. After the first launch it opens no network connections at all. The only
+times it uses the network are downloads you start yourself: the optional
+Parakeet speech model, the optional polish model, and Apple's own one-time
+download of its speech files the first time you dictate. There is no
+telemetry, no analytics, no crash reporting and no update check.
+
+If you want to see for yourself, this shows every network socket the app has
+open — it should print nothing:
+
+```bash
+lsof -nP -i -a -p $(pgrep -x MynaFlow)
+```
 
 ## If something goes wrong
 

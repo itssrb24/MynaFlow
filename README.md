@@ -15,10 +15,14 @@ older the app installs and then refuses to launch.
 
 ## Installing
 
-See [INSTALL.md](INSTALL.md). The short version: drag it to Applications, then
-**right-click the app and choose Open** the first time, because it is not
-notarized (that needs a paid Apple Developer account). After that it opens
-normally.
+Two ways, both in [INSTALL.md](INSTALL.md):
+
+- **Download the zip** and right-click ▸ Open the first time. The warning is
+  because the app is not notarized, which needs a paid Apple Developer
+  account; it is signed either way.
+- **Build it yourself** with `./Scripts/install.sh`, which has no warning at
+  all — the prompt comes from the quarantine flag macOS puts on downloads, and
+  an app built on your own Mac never gets one.
 
 ## What it does
 
