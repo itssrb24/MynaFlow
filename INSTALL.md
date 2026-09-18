@@ -92,6 +92,45 @@ open — it should print nothing:
 lsof -nP -i -a -p $(pgrep -x MynaFlow)
 ```
 
+## Every dictation opens the Scratchpad instead of typing
+
+This means the app is not being trusted for Accessibility, even if the switch
+in System Settings looks on. With no Accessibility, Myna Flow cannot see the
+text field you are aimed at, so it puts the words somewhere you will not lose
+them — the scratchpad — rather than typing into the unknown.
+
+Since version 1.0.1 the pill says so directly: *"Accessibility is off —
+re-enable it in System Settings"*. If you see that, work through this list.
+
+**1. Check how your copy is signed.**
+
+```bash
+codesign -dv "/Applications/Myna Flow.app" 2>&1 | grep -E "Signature|Authority"
+```
+
+If it prints `Signature=adhoc`, the build has no stable identity. macOS ties an
+Accessibility grant to the identity of the binary, and an ad-hoc one is just
+its hash — so the grant stops applying the moment you rebuild with any change,
+while the checkbox stays on. Rebuild with the current `./Scripts/install.sh`,
+which creates a proper local certificate the first time and reuses it forever,
+then do step 2.
+
+**2. Re-add the permission.** Turning it off and on again is not enough, since
+the stale entry is what is broken:
+
+1. System Settings ▸ Privacy & Security ▸ **Accessibility**
+2. Select **Myna Flow**, press the **–** button to remove it
+3. Press **+**, choose Myna Flow from Applications, make sure it is on
+4. **Quit Myna Flow from the menu bar and open it again** — a running app does
+   not pick up a new grant
+
+**3. If it still will not stick, check whether your Mac is managed.** On a work
+Mac, look at the Accessibility list: if entries say *"This setting has been
+configured by a profile"*, your IT department controls this list with a
+configuration profile, and a permission you add yourself can be ignored or
+reset. Nothing in the app can work around that — ask whoever manages the Mac to
+allow Myna Flow.
+
 ## If something goes wrong
 
 Open Myna Flow ▸ **Audio & General** ▸ **Export diagnostics…** and send that

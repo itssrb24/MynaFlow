@@ -1418,9 +1418,19 @@ final class AppCoordinator {
         // a green tick. `.clipboard` means the app refused the paste; the text
         // is on the clipboard for 30 seconds, so saying "inserted" would send
         // the user looking for words that are not there until it expires.
-        let reason = outcome.insertionMethod == .clipboard
-          ? "the app didn't take it — press ⌘V"
-          : "no text field was focused"
+        // Checked live rather than from the cached flag: a grant that stopped
+        // applying is exactly the case this message exists for. Without this
+        // branch an inactive permission reads as "no text field was focused",
+        // which sends people looking at the app they dictated into instead of
+        // at System Settings.
+        let reason: String
+        if !permissions.hasAccessibilityPermission {
+          reason = "Accessibility is off — re-enable it in System Settings"
+        } else if outcome.insertionMethod == .clipboard {
+          reason = "the app didn't take it — press ⌘V"
+        } else {
+          reason = "no text field was focused"
+        }
         indicator.display = .clipboardFallback(reason: reason)
         scheduleIndicatorHide(after: .seconds(2.5))
         // Password-field blocks carry a failure message and never reach the
