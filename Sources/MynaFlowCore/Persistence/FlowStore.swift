@@ -682,7 +682,8 @@ public actor FlowStore {
 
   /// Ordered migrations; each runs in a transaction and bumps user_version.
   /// Append-only — never edit a shipped migration.
-  private static let migrations: [[String]] = [
+  // Internal so the upgrade tests can build a database at an older version.
+  static let migrations: [[String]] = [
     // v1
     [
       """

@@ -14,7 +14,12 @@ let package = Package(
     dependencies: [
         // Parakeet v3 ASR (CoreML/ANE). App-target only — MynaFlowCore stays
         // dependency-free so its tests build fast.
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.5")
+        // upToNextMinor, not `from`: `from` is an open range up to 2.0, so a
+        // routine `swift package update` would silently pull whatever is
+        // published next into an app that records a microphone.
+        .package(
+            url: "https://github.com/FluidInference/FluidAudio.git",
+            .upToNextMinor(from: "0.15.7"))
     ],
     targets: [
         .target(
