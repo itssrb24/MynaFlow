@@ -168,7 +168,7 @@ Both are chosen in **Models**, which is also where the optional downloads
 live &mdash; nothing is fetched until you press the button.
 
 <p align="center">
-  <img src="docs/images/models.png" width="760" alt="The Models page showing the speech engine choice and the optional Parakeet and polish model downloads">
+  <img src="docs/images/models.png" width="660" alt="The Models page showing Apple Speech in use, Parakeet available to install, and three polish models each with an install button">
 </p>
 
 All of it sits behind one menu bar icon.
