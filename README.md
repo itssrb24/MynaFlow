@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/icon.png" width="128" alt="Myna Flow app icon: a brass dot-sphere on dark graphite">
+</p>
+
 <h1 align="center">Myna Flow</h1>
 
 <p align="center">

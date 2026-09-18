@@ -37,6 +37,11 @@ cp "$SCRATCH/release/MynaFlow" "$APP/Contents/MacOS/MynaFlow"
 # signing, since modifying a binary invalidates its signature.
 /usr/bin/strip -S "$APP/Contents/MacOS/MynaFlow"
 cp Packaging/Info.plist "$APP/Contents/Info.plist"
+# Info.plist declares CFBundleIconFile = AppIcon; without the file itself macOS
+# falls back to the blank generic document icon. Regenerate the .icns with
+# Packaging/icon/make-icon.py. Copied before signing, since the bundle's
+# resources are sealed by the signature.
+cp Packaging/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # llama.cpp runtimes (server + CLI + dylibs); provenance in SHA256SUMS.
 RUNTIMES_SRC="Sources/MynaFlowApp/Resources/Runtimes"

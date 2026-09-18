@@ -16,6 +16,12 @@ struct InsightsView: View {
           ForEach(InsightsPeriod.allCases, id: \.self) { Text($0.displayName).tag($0) }
         }
         .pickerStyle(.segmented)
+        // A labelled Picker puts its label beside the control, and this row is
+        // crowded enough that the label gets compressed to a few points wide
+        // and wraps one character per line. The segments say Today / 7 days /
+        // 30 days / All time, so the label is redundant on screen; hiding it
+        // keeps it for VoiceOver while letting maxWidth apply to the segments.
+        .labelsHidden()
         .frame(maxWidth: 360)
         Spacer()
         Button("Clear stats…") { confirmClear = true }
