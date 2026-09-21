@@ -453,6 +453,9 @@ final class AppCoordinator {
   private(set) var needsOnboarding = false
   private(set) var microphoneGranted = false
   private(set) var accessibilityGranted = false
+  /// Whether global hotkeys can be seen at all. Separate grant from
+  /// Accessibility, and without it every shortcut is silently dead.
+  private(set) var inputMonitoringGranted = false
   private var previewFrames: Task<Void, Never>?
 
   func refreshPermissions() {
@@ -460,6 +463,7 @@ final class AppCoordinator {
     let wasGranted = accessibilityGranted || !hasCheckedAccessibility
     hasCheckedAccessibility = true
     accessibilityGranted = permissions.hasAccessibilityPermission
+    inputMonitoringGranted = permissions.hasInputMonitoringPermission
     // A global event monitor is only live if the process was trusted when it
     // was created. On a first run the app starts untrusted, so the monitor
     // installed at launch is inert — and stays inert after the user grants
@@ -468,6 +472,15 @@ final class AppCoordinator {
     if accessibilityGranted, !wasGranted {
       diag("accessibility granted — reinstalling hotkey monitor")
       hotkeyMonitor?.install()
+    }
+    // Watching the keyboard from another app is Input Monitoring, not
+    // Accessibility. Without it the monitor installs happily and simply never
+    // fires, so every shortcut looks broken while insertion works fine.
+    // Asking also adds the app to the list in System Settings, so it can be
+    // switched on later even if this prompt is dismissed.
+    if !inputMonitoringGranted {
+      diag("input monitoring missing — hotkeys will not fire until it is granted")
+      permissions.requestInputMonitoringPermission()
     }
   }
 
