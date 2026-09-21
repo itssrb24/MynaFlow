@@ -476,9 +476,38 @@ final class AppCoordinator {
     refreshPermissions()
   }
 
+  /// Whether the system's one-shot Accessibility prompt has already been used.
+  private var hasPromptedForAccessibility = false
+
   func requestAccessibility() {
-    permissions.requestAccessibilityPermission()
-    refreshPermissions()
+    // macOS shows the "would like to control this computer" alert at most once
+    // per process for a given app, so a second press of the same button looks
+    // broken. Fall back to deep-linking the pane, which always opens.
+    if hasPromptedForAccessibility {
+      permissions.openAccessibilitySettings()
+    } else {
+      hasPromptedForAccessibility = true
+      permissions.requestAccessibilityPermission()
+    }
+    // Deliberately no refreshPermissions() here. It would run microseconds
+    // after the prompt was raised, long before the user could act, and write
+    // back the false we already have. The refresh happens when the window comes
+    // back to the front instead.
+  }
+
+  /// Relaunches the app.
+  ///
+  /// `AXIsProcessTrusted()` is cached per process: an app that launched
+  /// untrusted keeps answering false after the user grants Accessibility, so
+  /// for some people a restart is the only thing that ever makes the permission
+  /// take effect. Doing it for them beats telling them to do it.
+  func relaunch() {
+    guard let bundleURL = Bundle.main.bundleURL as URL? else { return }
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.createsNewApplicationInstance = true
+    NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { _, _ in
+      Task { @MainActor in NSApplication.shared.terminate(nil) }
+    }
   }
 
   /// Live meter for the mic step; frames are drained and discarded.

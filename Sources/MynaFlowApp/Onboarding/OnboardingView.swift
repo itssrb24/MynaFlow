@@ -20,11 +20,15 @@ struct OnboardingView: View {
   @State private var typingWPMText = "40"
   @State private var firstDictationText = ""
   @State private var dictationCountAtStart = 0
+  /// The user chose to move on without Accessibility.
+  @State private var accessibilityDeferred = false
+  /// The user chose to finish without a working first dictation.
+  @State private var dictationDeferred = false
+  @State private var permissionPoll: Task<Void, Never>?
 
-  private let stepTitles = [
-    "Welcome", "Microphone", "Accessibility", "Input", "Typing speed", "Polish model",
-    "Hotkeys", "First dictation",
-  ]
+  /// Single source of truth, shared with the gate in MynaFlowCore so the two
+  /// cannot drift apart.
+  private let stepTitles = OnboardingStep.allCases.map(\.title)
 
   var body: some View {
     VStack(spacing: 0) {
@@ -50,7 +54,20 @@ struct OnboardingView: View {
       }
       if newValue == 7 { dictationCountAtStart = coordinator.recentDictations.count }
     }
-    .onDisappear { coordinator.stopLevelPreview() }
+    // Granting a permission means leaving this window for System Settings and
+    // coming back. Without a re-check on the way back, the gate reads a value
+    // captured before the user did anything, and Continue stays greyed out
+    // forever. This is the fix for being stuck on the Accessibility step.
+    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification))
+    { _ in
+      coordinator.refreshPermissions()
+    }
+    .onChange(of: step) { _, newValue in pollPermissions(while: newValue) }
+    .task { pollPermissions(while: step) }
+    .onDisappear {
+      coordinator.stopLevelPreview()
+      permissionPoll?.cancel()
+    }
   }
 
   private var progress: some View {
@@ -110,8 +127,20 @@ struct OnboardingView: View {
               .font(Theme.Fonts.body).foregroundStyle(Theme.Colors.textSecondary)
             Button("Open Accessibility settings") { coordinator.requestAccessibility() }
               .buttonStyle(NeuButtonStyle(prominent: true))
-            Button("I've turned it on") { coordinator.refreshPermissions() }
-              .buttonStyle(NeuButtonStyle())
+            Text(
+              "Already turned it on and this still says it is off? macOS only tells an app about the permission when it starts, so Myna Flow has to be reopened to see it."
+            )
+            .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
+            HStack(spacing: Theme.Spacing.sm) {
+              Button("Quit and reopen Myna Flow") { coordinator.relaunch() }
+                .buttonStyle(NeuButtonStyle())
+              Button("Set this up later") { accessibilityDeferred = true }
+                .buttonStyle(NeuButtonStyle())
+            }
+            Text(
+              "Without it, dictation still works — the words go to a floating note you can paste from, instead of straight to your cursor."
+            )
+            .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
           }
         }
       }
@@ -190,6 +219,10 @@ struct OnboardingView: View {
           } else {
             Text("Waiting for your first dictation…")
               .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
+            // A microphone that will not cooperate must not make setup
+            // impossible to leave. The app is still usable from the menu bar.
+            Button("Finish without testing") { dictationDeferred = true }
+              .buttonStyle(NeuButtonStyle())
           }
         }
       }
@@ -219,18 +252,43 @@ struct OnboardingView: View {
           dismissWindow(id: "onboarding")
         }
         .buttonStyle(NeuButtonStyle(prominent: true))
-        .disabled(!firstDictationSucceeded)
+        .disabled(!OnboardingGate.canFinish(state: gateState))
       }
     }
     .padding(Theme.Spacing.lg)
     .background(Theme.Colors.well)
   }
 
+  private var gateState: OnboardingGate.State {
+    OnboardingGate.State(
+      microphoneGranted: coordinator.microphoneGranted,
+      accessibilityGranted: coordinator.accessibilityGranted,
+      accessibilityDeferred: accessibilityDeferred,
+      firstDictationSucceeded: firstDictationSucceeded,
+      dictationDeferred: dictationDeferred)
+  }
+
+  private var currentStep: OnboardingStep { OnboardingStep(rawValue: step) ?? .welcome }
+
   private var canAdvance: Bool {
-    switch step {
-    case 1: coordinator.microphoneGranted
-    case 2: coordinator.accessibilityGranted
-    default: true
+    OnboardingGate.canAdvance(from: currentStep, state: gateState)
+  }
+
+  /// Polls while a permission step is showing. `didBecomeActive` covers the
+  /// normal route back from System Settings; this covers the rest, such as a
+  /// permission changed while this window already had focus.
+  private func pollPermissions(while step: Int) {
+    permissionPoll?.cancel()
+    permissionPoll = nil
+    guard step == OnboardingStep.microphone.rawValue
+      || step == OnboardingStep.accessibility.rawValue
+    else { return }
+    permissionPoll = Task { @MainActor in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(1))
+        guard !Task.isCancelled else { return }
+        coordinator.refreshPermissions()
+      }
     }
   }
 
