@@ -10,7 +10,7 @@ There are two ways in. Pick one.
 
 ## Option A — download it (easiest)
 
-1. Download **MynaFlow-1.0.0.zip** and unzip it.
+1. Download the **MynaFlow zip** from the [releases page](https://github.com/itssrb24/MynaFlow/releases) and unzip it.
 2. Drag **Myna Flow** into your **Applications** folder.
 3. **Right-click** (or Control-click) the app and choose **Open**.
 4. macOS says it cannot verify the developer. Click **Open**.
@@ -99,7 +99,7 @@ in System Settings looks on. With no Accessibility, Myna Flow cannot see the
 text field you are aimed at, so it puts the words somewhere you will not lose
 them — the scratchpad — rather than typing into the unknown.
 
-Since version 1.0.1 the pill says so directly: *"Accessibility is off —
+Since version 1.1.0 the pill says so directly: *"Accessibility is off —
 re-enable it in System Settings"*. If you see that, work through this list.
 
 **1. Check how your copy is signed.**

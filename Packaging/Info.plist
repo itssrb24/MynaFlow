@@ -19,19 +19,19 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>1.1.0</string>
 	<key>CFBundleVersion</key>
-	<string>100</string>
+	<string>110</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
-	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2026 Shahrukh. MIT licensed.</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Shahrukh. MIT licensed.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Myna Flow records only while you hold or toggle the dictation shortcut. Audio is transcribed on this Mac and deleted immediately. Nothing is sent anywhere.</string>
 	<key>NSPrincipalClass</key>
