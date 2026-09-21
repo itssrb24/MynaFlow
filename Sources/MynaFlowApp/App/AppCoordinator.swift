@@ -456,6 +456,10 @@ final class AppCoordinator {
   /// Whether global hotkeys can be seen at all. Separate grant from
   /// Accessibility, and without it every shortcut is silently dead.
   private(set) var inputMonitoringGranted = false
+  /// The Input Monitoring prompt is raised once per launch, never on a timer.
+  private var hasRequestedInputMonitoring = false
+  /// Guards the relaunch button against stacking instances.
+  private var isRelaunching = false
   private var previewFrames: Task<Void, Never>?
 
   func refreshPermissions() {
@@ -463,6 +467,7 @@ final class AppCoordinator {
     let wasGranted = accessibilityGranted || !hasCheckedAccessibility
     hasCheckedAccessibility = true
     accessibilityGranted = permissions.hasAccessibilityPermission
+    let wasInputMonitoringGranted = inputMonitoringGranted
     inputMonitoringGranted = permissions.hasInputMonitoringPermission
     // A global event monitor is only live if the process was trusted when it
     // was created. On a first run the app starts untrusted, so the monitor
@@ -476,10 +481,21 @@ final class AppCoordinator {
     // Watching the keyboard from another app is Input Monitoring, not
     // Accessibility. Without it the monitor installs happily and simply never
     // fires, so every shortcut looks broken while insertion works fine.
-    // Asking also adds the app to the list in System Settings, so it can be
-    // switched on later even if this prompt is dismissed.
-    if !inputMonitoringGranted {
-      diag("input monitoring missing — hotkeys will not fire until it is granted")
+    //
+    // Say it once per transition, not once per refresh. This runs on a one
+    // second poll while a permission step is open, and logging every pass
+    // buried every other event in the diagnostics under hundreds of identical
+    // lines — which is exactly when someone is most likely to be reading them.
+    if inputMonitoringGranted != wasInputMonitoringGranted {
+      diag(
+        inputMonitoringGranted
+          ? "input monitoring granted — hotkeys can fire"
+          : "input monitoring missing — hotkeys will not fire until it is granted")
+    }
+    // Ask once per launch. IOHIDRequestAccess on a repeating timer is a prompt
+    // storm at worst and pointless at best.
+    if !inputMonitoringGranted, !hasRequestedInputMonitoring {
+      hasRequestedInputMonitoring = true
       permissions.requestInputMonitoringPermission()
     }
   }
@@ -514,8 +530,17 @@ final class AppCoordinator {
   /// untrusted keeps answering false after the user grants Accessibility, so
   /// for some people a restart is the only thing that ever makes the permission
   /// take effect. Doing it for them beats telling them to do it.
+  func openInputMonitoringSettings() {
+    permissions.openInputMonitoringSettings()
+  }
+
   func relaunch() {
-    guard let bundleURL = Bundle.main.bundleURL as URL? else { return }
+    // Without this guard a second press starts another copy before the first
+    // has gone, and they pile up: six instances were seen running at once,
+    // all writing to the same diagnostics log and all holding hotkeys.
+    guard !isRelaunching else { return }
+    isRelaunching = true
+    let bundleURL = Bundle.main.bundleURL
     let configuration = NSWorkspace.OpenConfiguration()
     configuration.createsNewApplicationInstance = true
     NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { _, _ in

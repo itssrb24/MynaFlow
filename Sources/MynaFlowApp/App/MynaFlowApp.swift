@@ -105,6 +105,16 @@ struct MenuBarMenu: View {
     }
     Text(coordinator.speechStatusLine)
     Text(coordinator.modelsStatusLine)
+    // Hotkeys need Input Monitoring, which is a different grant from
+    // Accessibility. Without it every shortcut is silently dead, so say so
+    // where it will actually be seen rather than only in the diagnostics.
+    if !coordinator.inputMonitoringGranted {
+      Divider()
+      Text("Shortcuts are off — Input Monitoring is not granted")
+      Button("Open Input Monitoring settings…") {
+        coordinator.openInputMonitoringSettings()
+      }
+    }
     Divider()
     Button(coordinator.menuBarState == .recording
       ? "Stop Dictation"

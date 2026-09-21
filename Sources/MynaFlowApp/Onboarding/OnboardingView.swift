@@ -142,6 +142,26 @@ struct OnboardingView: View {
             )
             .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
           }
+
+          // A second, separate grant. Noticing a keyboard shortcut is Input
+          // Monitoring; placing text is Accessibility. With only the latter,
+          // every shortcut is silently dead while insertion works perfectly,
+          // which reads as a broken hotkey rather than a missing permission.
+          // macOS does not always raise its own prompt for this — on a managed
+          // Mac it may never appear — so there has to be a way in by hand.
+          if !coordinator.inputMonitoringGranted {
+            Divider().overlay(Theme.Colors.surface)
+            Text("One more: Input Monitoring")
+              .font(Theme.Fonts.bodyStrong).foregroundStyle(Theme.Colors.textPrimary)
+            Text(
+              "Separate from the permission above, and needed for the keyboard shortcut to be noticed at all. Without it Myna Flow can still type for you, but pressing the shortcut does nothing."
+            )
+            .font(Theme.Fonts.body).foregroundStyle(Theme.Colors.textSecondary)
+            Button("Open Input Monitoring settings") {
+              coordinator.openInputMonitoringSettings()
+            }
+            .buttonStyle(NeuButtonStyle())
+          }
         }
       }
     case 3:

@@ -92,6 +92,31 @@ open — it should print nothing:
 lsof -nP -i -a -p $(pgrep -x MynaFlow)
 ```
 
+## The shortcut does nothing, but dictation works from the menu bar
+
+Myna Flow needs **two** separate permissions to do its job, and they are easy to
+confuse:
+
+| Permission | What it covers |
+|---|---|
+| **Accessibility** | Placing the text at your cursor |
+| **Input Monitoring** | *Noticing* that you pressed the shortcut |
+
+With Accessibility but not Input Monitoring, everything works except the
+shortcut: dictation started from the menu bar types perfectly, and pressing
+⌘⇧Space does nothing at all. It looks like a broken hotkey; it is a missing
+permission.
+
+Since 1.1.2 the menu bar says so directly — *"Shortcuts are off — Input
+Monitoring is not granted"* — with a button that opens the right pane. You can
+also get there yourself:
+
+System Settings ▸ Privacy & Security ▸ **Input Monitoring** ▸ **+** ▸ add Myna
+Flow from Applications ▸ switch it on ▸ **quit and reopen Myna Flow**.
+
+macOS does not always raise its own prompt for this one, and on a Mac managed by
+an employer it may never appear, so adding it by hand is sometimes the only way.
+
 ## Every dictation opens the Scratchpad instead of typing
 
 This means the app is not being trusted for Accessibility, even if the switch

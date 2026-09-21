@@ -326,7 +326,7 @@ item unless you switch one on.
 
 | Symptom | Fix |
 |---|---|
-| The shortcut does nothing | Quit Myna Flow from the menu bar and reopen it. Global shortcuts only bind once Accessibility is granted. |
+| The shortcut does nothing | Check the menu bar: if it says Input Monitoring is not granted, that is a separate permission from Accessibility and shortcuts cannot be seen without it. See [INSTALL.md](INSTALL.md#the-shortcut-does-nothing-but-dictation-works-from-the-menu-bar). Otherwise quit and reopen the app. |
 | Every dictation opens the Scratchpad | Accessibility is not actually active, whatever the switch says. See [INSTALL.md](INSTALL.md#every-dictation-opens-the-scratchpad-instead-of-typing) — usually an ad-hoc build, fixed by re-running `./Scripts/install.sh` and re-adding the permission. |
 | Text lands in the wrong app | Click where you want the text *before* you start dictating. |
 | Nothing is inserted in Google Docs | Check **Audio** ▸ *Paste even when the text field cannot be seen* is on. Docs exposes no text field, so this is the only way text reaches it. |
