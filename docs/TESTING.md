@@ -139,8 +139,13 @@ a second install keeps the identical designated requirement.
 `--source --self-signed --no-reset`: System Settings kept showing one "Myna Flow"
 row switched on under both Accessibility and Input Monitoring, and the rebuilt app
 read Accessibility off and Input Monitoring denied. Quitting and reopening changed
-nothing. Only removing the row and adding the app again recovered it — the row was
-the old signature's. That is the entire "granted but not granted" complaint,
+nothing. Removing the row and adding the app back *while it was running* changed
+nothing either — macOS re-created the old row from the running copy's identity
+before the new one could take. What recovered it: quit the app, remove the row
+(`tccutil reset ListenEvent com.itssrb24.MynaFlow` does the same as **–**), relaunch;
+the app was granted on the spot, from the approval given minutes earlier — and the
+pane showed **no row at all** while the app read granted. The pane is not the
+truth; `--print-permissions` is. That is the entire "granted but not granted" complaint,
 reproducible on demand.
 
 ## Why not just a second user account

@@ -150,16 +150,21 @@ while the checkbox stays on. Rebuild with the current `./Scripts/install.sh`,
 which creates a proper local certificate the first time and reuses it forever,
 then do step 2.
 
-**3. Re-add the permission.** Turning it off and on again is not enough, and
-neither is quitting and reopening the app — both were tried, on a copy whose
-signature had just changed, and the app still read Input Monitoring as denied with
-the switch showing on. The row itself belongs to the old signature:
+**3. Re-add the permission — with the app quit first.** Turning it off and on is
+not enough, and neither is relaunching: the row belongs to the old signature. And
+if the app is *running* while you remove the row, macOS re-creates it at once
+from the running copy's old identity, so pressing **+** afterwards changes nothing.
+That exact sequence was watched happen. So:
 
-1. System Settings ▸ Privacy & Security ▸ **Accessibility**
-2. Select **Myna Flow**, press the **–** button to remove it
-3. Press **+**, choose Myna Flow from Applications, make sure it is on
-4. **Quit Myna Flow from the menu bar and open it again** — a running app does
-   not pick up a new grant
+1. **Quit Myna Flow** from the menu bar.
+2. System Settings ▸ Privacy & Security ▸ **Accessibility**: select Myna Flow, **–**.
+   Same under **Input Monitoring**.
+3. Open Myna Flow again. It asks for what it needs; grant it.
+
+Do not trust the pane's switch as the last word — a row can show as on while the
+app is refused, and a grant can be in force with no row shown at all. The last
+word is **Audio & General ▸ Permissions** in the app, which reports what macOS
+actually answered *this* copy.
 
 **4. If it still will not stick, check whether your Mac is managed.** On a work
 Mac, look at the Accessibility list: if entries say *"This setting has been
