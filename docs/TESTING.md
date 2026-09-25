@@ -55,7 +55,7 @@ identity, any other copies, and the findings. Needs the GUI session; the prompts
 yours to click.
 
 ```bash
-./Scripts/test-fresh-install.sh --release dist/MynaFlow-1.1.3.zip   # what family gets: quarantined, right-click ▸ Open
+./Scripts/test-fresh-install.sh --release dist/MynaFlow-1.1.4.zip   # what family gets: quarantined, right-click ▸ Open
 ./Scripts/test-fresh-install.sh --source                            # build here; Apple Development if you have it
 ./Scripts/test-fresh-install.sh --source --self-signed              # a Mac with no developer certificate
 ./Scripts/test-fresh-install.sh --adhoc-first                       # then run --source --self-signed …
