@@ -88,7 +88,7 @@ signing_authority() {
 # TCC answers for the shell's grants instead of the app's.
 print_permissions() {   # $1 = app bundle, $2 = output json path
   rm -f "$2"
-  open -n -W --stdout "$2" --stderr /dev/null -a "$1" --args --print-permissions
+  open -n -W --stdout "$2" --stderr /dev/null -a "$1" --args --print-permissions 2>/dev/null
   [[ -s "$2" ]]
 }
 

@@ -9,6 +9,8 @@
 #   test-fresh-install.sh --adhoc-first            install ad-hoc, then rerun --source --self-signed:
 #                                                  reproduces "granted in Settings, off in the app"
 #   options: --keep-models   --timeout <seconds>
+#            --no-reset       keep the current grants across the reinstall: this is how you
+#                             watch a grant made for one signature fail to apply to the next
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source Scripts/lib/signing.sh
@@ -16,7 +18,7 @@ source Scripts/lib/signing.sh
 print_step() { print -P "%F{blue}==>%f $1" }
 print_bad()  { print -P "%F{red}error:%f $1" >&2 }
 
-MODE=""; ZIP=""; SELF_SIGNED=0; KEEP_MODELS=0; TIMEOUT=600
+MODE=""; ZIP=""; SELF_SIGNED=0; KEEP_MODELS=0; TIMEOUT=600; NO_RESET=0
 while (( $# )); do
   case "$1" in
     --release) MODE=release; ZIP="$2"; shift 2 ;;
@@ -25,6 +27,7 @@ while (( $# )); do
     --self-signed) SELF_SIGNED=1; shift ;;
     --keep-models) KEEP_MODELS=1; shift ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
+    --no-reset) NO_RESET=1; shift ;;
     *) print_bad "unknown option $1"; exit 2 ;;
   esac
 done
@@ -88,10 +91,14 @@ if (( KEEP_MODELS )) && [[ -d "$SCRATCH/Models.keep" ]]; then
   mkdir -p "$SUPPORT"; mv "$SCRATCH/Models.keep" "$SUPPORT/Models"
 fi
 
-print_step "Resetting privacy grants (after install: tccutil needs the bundle resolvable)"
-for svc in Microphone Accessibility ListenEvent; do
-  tccutil reset "$svc" "$BUNDLE_ID" >/dev/null 2>&1 || print "  ($svc: nothing to reset)"
-done
+if (( NO_RESET )); then
+  print_step "Keeping existing privacy grants (--no-reset)"
+else
+  print_step "Resetting privacy grants (after install: tccutil needs the bundle resolvable)"
+  for svc in Microphone Accessibility ListenEvent; do
+    tccutil reset "$svc" "$BUNDLE_ID" >/dev/null 2>&1 || print "  ($svc: nothing to reset)"
+  done
+fi
 
 grant() { plutil -extract "$1" raw -o - "$2" 2>/dev/null || print "?" }
 print_step "Baseline, before launch"
@@ -123,7 +130,8 @@ printf '  %-18s %-14s %-14s\n' permission before after
 for k in microphone accessibility inputMonitoring; do
   printf '  %-18s %-14s %-14s\n' "$k" "$(grant $k "$SCRATCH/before.json")" "$(grant $k "$SCRATCH/after.json")"
 done
-print "  identity:     $(grant app.authority.0 "$SCRATCH/after.json") [$(grant app.signature "$SCRATCH/after.json"), $(grant app.fingerprint "$SCRATCH/after.json" | cut -c1-8)]"
+auth=$(grant app.authority.0 "$SCRATCH/after.json"); [[ "$auth" == "?" ]] && auth="(no certificate)"
+print "  identity:     $auth [$(grant app.signature "$SCRATCH/after.json"), $(grant app.fingerprint "$SCRATCH/after.json" | cut -c1-8)]"
 print "  other copies: $(grant otherCopies "$SCRATCH/after.json")"
 n=$(grant findings "$SCRATCH/after.json"); print "  findings:     $n"
 for (( j=0; j<${n:-0}; j++ )); do print "    - $(grant "findings.$j.text" "$SCRATCH/after.json")"; done
