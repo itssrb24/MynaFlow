@@ -87,7 +87,10 @@ cd MynaFlow
 ```
 
 That checks your macOS version, builds the app, installs it into Applications
-and opens it. To update later, `git pull` and run it again.
+and opens it — and removes the build copy from the clone, so there is only ever one
+Myna Flow for macOS to grant permissions to. To update later, `git pull` and run it
+again. Testing on another Mac without owning one is covered in
+[docs/TESTING.md](docs/TESTING.md).
 
 ### First run
 

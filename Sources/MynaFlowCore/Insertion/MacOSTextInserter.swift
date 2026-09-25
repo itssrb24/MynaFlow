@@ -74,6 +74,10 @@ public final class MacOSTextInserter: TextInsertionService {
     pressEnter: Bool,
     allowBlindPaste: Bool = false
   ) async throws -> TextInsertionResult {
+    // Read once and threaded into the diagnostics: an untrusted process and a
+    // window with no focused element both used to log focus=unresolved, and
+    // nobody could tell a missing permission from an app with no text field.
+    let accessibilityTrusted = AXIsProcessTrusted()
     let applicationReady = await activateCapturedApplication()
     let focusedTarget = focusedElement(for: capturedApplication)
     if capturedElement != nil, !capturedTargetIsStillFocused(focusedTarget) {
@@ -101,7 +105,7 @@ public final class MacOSTextInserter: TextInsertionService {
     let guessingIntoASecureWindow =
       resolution.map { !$0.focusVerified && $0.secureFieldSeen } ?? false
     let plan = InsertionPlanner.plan(
-      accessibilityGranted: AXIsProcessTrusted(),
+      accessibilityGranted: accessibilityTrusted,
       hasFocusedElement: resolvedTarget != nil,
       isSecureField: SecureFieldDetector.isSecure(role: role, subrole: subrole)
         || guessingIntoASecureWindow,
@@ -138,8 +142,10 @@ public final class MacOSTextInserter: TextInsertionService {
       let clipboardReady = copyToClipboard(text)
       _ = applicationReady
       lastInsertionDiagnostics = diagnostic(
-        route: "clipboard-only", role: "unavailable", focus: "unresolved",
-        clipboard: clipboardReady ? "ready" : "failed", value: "unavailable")
+        route: "clipboard-only", role: "unavailable",
+        focus: accessibilityTrusted ? "unresolved" : "not-attempted",
+        clipboard: clipboardReady ? "ready" : "failed", value: "unavailable",
+        ax: accessibilityTrusted ? "trusted" : "untrusted")
       if clipboardReady { scheduleClipboardCleanup(payload: text, previous: previousClipboard) }
       return .noFocusedField
     case .refuseSecureField:
@@ -309,12 +315,13 @@ public final class MacOSTextInserter: TextInsertionService {
   }
 
   private func diagnostic(
-    route: String, role: String, focus: String, clipboard: String, value: String
+    route: String, role: String, focus: String, clipboard: String, value: String,
+    ax: String = "trusted"
   ) -> String {
     let bundleIdentifier = capturedBundleIdentifier ?? "unknown-app"
     let safeRole = role.isEmpty ? "unknown-role" : role
     return
-      "target=\(bundleIdentifier); role=\(safeRole); route=\(route); focus=\(focus); clipboard=\(clipboard); value=\(value)"
+      "ax=\(ax); target=\(bundleIdentifier); role=\(safeRole); route=\(route); focus=\(focus); clipboard=\(clipboard); value=\(value)"
   }
 
   private func currentFocusedElement() -> AXUIElement? {

@@ -152,6 +152,8 @@ struct AudioView: View {
       }
       .raised()
 
+      PermissionsSection(coordinator: coordinator)
+
       VStack(alignment: .leading, spacing: Theme.Spacing.md) {
         SectionLabel(text: "Diagnostics")
         Text("An event log (outcomes and errors, never your words) kept on this Mac. Share it when reporting a problem.")

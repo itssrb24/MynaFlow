@@ -30,6 +30,26 @@ public final class PermissionManager {
     IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
   }
 
+  /// Denied and never-asked are different problems with different fixes; a
+  /// report needs to tell them apart. Neither reader prompts.
+  public var inputMonitoringState: PermissionSnapshot.Grant {
+    switch IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) {
+    case kIOHIDAccessTypeGranted: .granted
+    case kIOHIDAccessTypeDenied: .denied
+    default: .notDetermined
+    }
+  }
+
+  public var microphoneState: PermissionSnapshot.Grant {
+    switch microphoneAuthorization {
+    case .authorized: .granted
+    case .denied: .denied
+    case .restricted: .restricted
+    case .notDetermined: .notDetermined
+    @unknown default: .notDetermined
+    }
+  }
+
   /// Raises the Input Monitoring prompt, and adds the app to the list in
   /// System Settings so it can be switched on even if the prompt is dismissed.
   @discardableResult

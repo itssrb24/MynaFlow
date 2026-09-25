@@ -16,7 +16,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 }
 
+/// Entry point. `--print-permissions` is answered before SwiftUI starts:
+/// no status item, no windows, no delegate, nothing that could prompt.
 @main
+enum Entry {
+  @MainActor static func main() {
+    if CommandLine.arguments.contains(PermissionsCommand.flag) {
+      PermissionsCommand.run()
+    }
+    MynaFlowApp.main()
+  }
+}
+
 struct MynaFlowApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @State private var coordinator = AppCoordinator()
@@ -115,6 +126,13 @@ struct MenuBarMenu: View {
         coordinator.openInputMonitoringSettings()
       }
     }
+    if coordinator.signatureMismatchWarning != nil {
+      Divider()
+      Text("Another copy of Myna Flow is signed differently — permissions may not apply")
+      Button("Show details in Myna Flow…") {
+        coordinator.showMainWindow { id in openWindow(id: id) }
+      }
+    }
     Divider()
     Button(coordinator.menuBarState == .recording
       ? "Stop Dictation"
@@ -185,7 +203,13 @@ struct MenuBarMenu: View {
     }
     .keyboardShortcut("q")
     Color.clear.frame(width: 0, height: 0)
-      .task { await coordinator.refreshInstalledFlags() }
+      .task {
+        // Opening the menu is the one moment a window-less menu-bar app is
+        // sure to get after the user comes back from System Settings.
+        coordinator.refreshPermissions()
+        coordinator.refreshInstalledCopies()
+        await coordinator.refreshInstalledFlags()
+      }
   }
 
   private func menuTitle(for record: DictationRecord) -> String {

@@ -28,7 +28,12 @@ enum IndicatorDisplay: Equatable {
 @MainActor
 @Observable
 final class IndicatorModel {
-  var display: IndicatorDisplay = .hidden
+  var display: IndicatorDisplay = .hidden {
+    // The action belongs to one error pill. Clearing it for any other
+    // display means a later, unrelated error cannot open the wrong System
+    // Settings pane — which it did, because nothing ever reset it.
+    didSet { if case .error = display {} else { onErrorAction = nil } }
+  }
   /// Smoothed level the orb reads. Assigned only through `submitAudioLevel`.
   private(set) var orbLevel: Double = AudioLevelEnvelope().output
   /// Orb-time, which advances only while there is sound.

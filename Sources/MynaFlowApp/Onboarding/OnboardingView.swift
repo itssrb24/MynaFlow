@@ -54,14 +54,6 @@ struct OnboardingView: View {
       }
       if newValue == 7 { dictationCountAtStart = coordinator.recentDictations.count }
     }
-    // Granting a permission means leaving this window for System Settings and
-    // coming back. Without a re-check on the way back, the gate reads a value
-    // captured before the user did anything, and Continue stays greyed out
-    // forever. This is the fix for being stuck on the Accessibility step.
-    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification))
-    { _ in
-      coordinator.refreshPermissions()
-    }
     .onChange(of: step) { _, newValue in pollPermissions(while: newValue) }
     .task { pollPermissions(while: step) }
     .onDisappear {

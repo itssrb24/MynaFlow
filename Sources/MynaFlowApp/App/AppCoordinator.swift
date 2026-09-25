@@ -156,6 +156,12 @@ final class AppCoordinator {
       diag(
         "startup: schema v\(await store.schemaVersion()), "
           + "recovered=\(recoveredDatabaseURL != nil), swept \(strandedAudio) scratch files")
+      refreshInstalledCopies()
+      installActivationHandling()
+      diag(
+        "identity=\(selfIdentity?.shortFingerprint ?? "unsigned") sig=\(selfIdentity?.signature.rawValue ?? "unknown") copies=\(otherCopies.count)")
+      let findings = currentPermissionSnapshot().mismatchWarnings
+      if !findings.isEmpty { diag("permission findings: " + findings.joined(separator: " | ")) }
       let apple = AppleSpeechEngine()
       await apple.resolveLocale()
       appleEngine = apple
@@ -260,7 +266,7 @@ final class AppCoordinator {
     panel.title = "Export diagnostics log"
     NSApp.activate(ignoringOtherApps: true)
     guard panel.runModal() == .OK, let url = panel.url else { return }
-    let data = DiagnosticsLog.shared.exportData()
+    let data = diagnosticsExportData()
     if !FileManager.default.createFile(
       atPath: url.path, contents: data, attributes: [.posixPermissions: 0o600])
     {
@@ -456,11 +462,73 @@ final class AppCoordinator {
   /// Whether global hotkeys can be seen at all. Separate grant from
   /// Accessibility, and without it every shortcut is silently dead.
   private(set) var inputMonitoringGranted = false
+  /// Read once: a running process cannot change its own signature.
+  let selfIdentity: CodeIdentity? = try? CodeIdentity.current()
+  /// Re-scanned on activation and from the Permissions section. A Launch
+  /// Services query, not a filesystem walk.
+  private(set) var otherCopies: [CodeIdentity] = []
+  private var activationObserver: (any NSObjectProtocol)?
   /// The Input Monitoring prompt is raised once per launch, never on a timer.
   private var hasRequestedInputMonitoring = false
   /// Guards the relaunch button against stacking instances.
   private var isRelaunching = false
   private var previewFrames: Task<Void, Never>?
+
+  /// The report first: a log that does not say what it is signed as cannot
+  /// explain a permission that will not take. The only personal detail this
+  /// adds is the signing certificate's name, which `codesign -dv` prints too.
+  private func diagnosticsExportData() -> Data {
+    var data = Data(currentPermissionSnapshot().report.utf8)
+    data.append(Data("\n---- event log ----\n".utf8))
+    data.append(DiagnosticsLog.shared.exportData())
+    return data
+  }
+
+  func refreshInstalledCopies() {
+    let bundleID = Bundle.main.bundleIdentifier ?? "com.itssrb24.MynaFlow"
+    otherCopies = InstalledCopies.find(bundleID: bundleID, excluding: Bundle.main.bundleURL)
+  }
+
+  /// Live TCC reads plus the cached identity and copies. Live, not the cached
+  /// `accessibilityGranted`: this runs at startup before the first refresh, and
+  /// a stale false there logged "Accessibility reads as off" on every launch.
+  func currentPermissionSnapshot() -> PermissionSnapshot {
+    let v = ProcessInfo.processInfo.operatingSystemVersion
+    return PermissionSnapshot(
+      macOSVersion: "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)",
+      microphone: permissions.microphoneState,
+      accessibility: permissions.hasAccessibilityPermission,
+      inputMonitoring: permissions.inputMonitoringState,
+      app: selfIdentity ?? CodeIdentity.unreadable(at: Bundle.main.bundleURL),
+      otherCopies: otherCopies)
+  }
+
+  var signatureMismatchWarning: String? { currentPermissionSnapshot().mismatchWarnings.first }
+
+  func copyPermissionReport() {
+    // Straight to the general pasteboard: a report is meant to be pasted into
+    // an issue and to outlive the 30 s hygiene window dictated text gets.
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(currentPermissionSnapshot().report, forType: .string)
+  }
+
+  func openMicrophoneSettings() { permissions.openMicrophoneSettings() }
+  func openAccessibilitySettings() { permissions.openAccessibilitySettings() }
+
+  /// The only reliable hook for a menu-bar app coming back from System
+  /// Settings with no window open is activation; refresh both the grants and
+  /// the list of copies there.
+  private func installActivationHandling() {
+    activationObserver = NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor in
+        self?.refreshPermissions()
+        self?.refreshInstalledCopies()
+      }
+    }
+  }
 
   func refreshPermissions() {
     microphoneGranted = permissions.microphoneAuthorization == .authorized

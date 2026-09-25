@@ -37,46 +37,7 @@ fi
 #
 # So: use a real identity if the machine has one, otherwise mint a local
 # self-signed one once and reuse it forever.
-CERT_NAME="Myna Flow"
-
-existing_identity() {
-  security find-identity -v -p codesigning 2>/dev/null \
-    | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"'
-}
-
-have_local_cert() {
-  # No -v here: that filters to identities with a trusted chain, and a
-  # self-signed certificate never has one. It still signs perfectly well,
-  # and macOS only cares that the identity is stable between builds.
-  security find-identity -p codesigning 2>/dev/null | grep -q "\"$CERT_NAME\""
-}
-
-create_local_cert() {
-  local dir
-  dir=$(mktemp -d)
-  cat > "$dir/openssl.cnf" <<'CNF'
-[ req ]
-distinguished_name = dn
-x509_extensions = ext
-prompt = no
-[ dn ]
-CN = Myna Flow
-[ ext ]
-basicConstraints = critical,CA:false
-keyUsage = critical,digitalSignature
-extendedKeyUsage = critical,codeSigning
-# Apple's "code signing" certificate marker.
-1.2.840.113635.100.6.1.13 = DER:0500
-CNF
-  openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-    -keyout "$dir/key.pem" -out "$dir/cert.pem" -config "$dir/openssl.cnf" >/dev/null 2>&1 || return 1
-  openssl pkcs12 -export -inkey "$dir/key.pem" -in "$dir/cert.pem" \
-    -out "$dir/id.p12" -name "$CERT_NAME" -passout pass:mynaflow >/dev/null 2>&1 || return 1
-  security import "$dir/id.p12" -k "$HOME/Library/Keychains/login.keychain-db" \
-    -P mynaflow -T /usr/bin/codesign -A >/dev/null 2>&1 || { rm -rf "$dir"; return 1; }
-  rm -rf "$dir"
-  have_local_cert
-}
+source "$(dirname "$0")/lib/signing.sh"
 
 if [[ -n "${SIGN_IDENTITY:-}" ]]; then
   : # caller knows what they want
@@ -101,6 +62,18 @@ print_step "Building (a few minutes the first time)"
 
 APP="dist/Myna Flow.app"
 if [[ -d "/Applications/Myna Flow.app" ]]; then
+  # macOS keys Accessibility and Input Monitoring to the signature. If this
+  # build is signed differently from the installed copy, the old grant stops
+  # applying while System Settings still shows it on — the single most
+  # confusing failure this app has. Say so before it happens.
+  OLD_DR=$(designated_requirement "/Applications/Myna Flow.app")
+  NEW_DR=$(designated_requirement "$APP")
+  if [[ -n "$OLD_DR" && "$OLD_DR" != "$NEW_DR" ]]; then
+    print -P "%F{yellow}warning:%f the installed copy is signed as $(signing_authority '/Applications/Myna Flow.app');"
+    print "  this build is signed as $(signing_authority "$APP")."
+    print "  macOS treats it as a new app: re-grant Accessibility and Input Monitoring after it opens"
+    print "  (System Settings > Privacy & Security; remove the old row with -, add the app again with +)."
+  fi
   print_step "Replacing the existing copy"
   osascript -e 'tell application "Myna Flow" to quit' >/dev/null 2>&1 || true
   sleep 1
@@ -109,6 +82,18 @@ fi
 
 print_step "Installing to /Applications"
 cp -R "$APP" /Applications/
+# Never leave a second copy inside the clone. Launch Services registers it,
+# System Settings can be granting it, and the copy in /Applications is then
+# the one that reads as not allowed.
+rm -rf "$APP"
+
+print_step "Identity: $(signing_authority '/Applications/Myna Flow.app')"
+for other in $(other_copies "/Applications/Myna Flow.app"); do
+  if [[ "$(designated_requirement "$other")" != "$(designated_requirement '/Applications/Myna Flow.app')" ]]; then
+    print -P "%F{yellow}warning:%f another copy at $other is signed differently."
+    print "  Remove it, or System Settings may be granting that one instead of this one."
+  fi
+done
 open "/Applications/Myna Flow.app"
 
 cat <<'DONE'
@@ -118,6 +103,8 @@ Installed. Myna Flow is in your menu bar — it has no Dock icon.
 It will ask for two permissions, and needs both:
   • Microphone      so it can hear you
   • Accessibility   so it can type into other apps
+
+Audio & General > Permissions shows what macOS actually granted this copy.
 
 If the shortcut does nothing right after you grant Accessibility, quit Myna
 Flow from the menu bar and open it again.

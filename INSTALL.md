@@ -127,7 +127,12 @@ them — the scratchpad — rather than typing into the unknown.
 Since version 1.1.0 the pill says so directly: *"Accessibility is off —
 re-enable it in System Settings"*. If you see that, work through this list.
 
-**1. Check how your copy is signed.**
+**1. Look at Audio & General ▸ Permissions.** It shows what macOS actually granted
+*this* copy, how the copy is signed, and every other copy of Myna Flow installed under
+the same name — flagged if one is signed differently, which is the usual cause.
+**Copy report** puts it all on the clipboard.
+
+**2. Check how your copy is signed.**
 
 ```bash
 codesign -dv "/Applications/Myna Flow.app" 2>&1 | grep -E "Signature|Authority"
@@ -140,7 +145,7 @@ while the checkbox stays on. Rebuild with the current `./Scripts/install.sh`,
 which creates a proper local certificate the first time and reuses it forever,
 then do step 2.
 
-**2. Re-add the permission.** Turning it off and on again is not enough, since
+**3. Re-add the permission.** Turning it off and on again is not enough, since
 the stale entry is what is broken:
 
 1. System Settings ▸ Privacy & Security ▸ **Accessibility**
@@ -149,7 +154,7 @@ the stale entry is what is broken:
 4. **Quit Myna Flow from the menu bar and open it again** — a running app does
    not pick up a new grant
 
-**3. If it still will not stick, check whether your Mac is managed.** On a work
+**4. If it still will not stick, check whether your Mac is managed.** On a work
 Mac, look at the Accessibility list: if entries say *"This setting has been
 configured by a profile"*, your IT department controls this list with a
 configuration profile, and a permission you add yourself can be ignored or
