@@ -47,18 +47,23 @@ elif have_local_cert; then
   export SIGN_IDENTITY="$CERT_NAME"
 elif print_step "Creating a local signing certificate (once)" && create_local_cert; then
   export SIGN_IDENTITY="$CERT_NAME"
+elif [[ "${ALLOW_ADHOC:-0}" == "1" ]]; then
+  print -P "%F{yellow}warning:%f no signing certificate; installing AD-HOC because you set ALLOW_ADHOC=1."
+  print "  macOS will forget its permissions on every rebuild. Not for daily use."
 else
-  print_bad "Could not create a signing certificate."
-  print "Myna Flow will be installed with an ad-hoc signature. It will work,"
-  print "but macOS forgets its Accessibility permission every time you rebuild,"
-  print "and dictation then falls back to the scratchpad instead of typing."
-  print "If that happens: System Settings > Privacy & Security > Accessibility,"
-  print "select Myna Flow, press the minus button, add it again, then restart it."
-  export ALLOW_ADHOC=1
+  # Never silently. An ad-hoc install works on the day and breaks on the next
+  # rebuild — the permission "stops taking" and nothing says why. That is
+  # worse than no install, so it is an error, not a fallback.
+  print_bad "Could not create a signing certificate, so this install was NOT done."
+  print "  The reason is printed above. The usual one is the keychain refusing"
+  print "  because it needs a dialog; this script now uses its own keychain, so"
+  print "  if you are seeing this, please paste the lines above into an issue."
+  print "  To install anyway with a throwaway signature: ALLOW_ADHOC=1 ./Scripts/install.sh"
+  exit 1
 fi
 
 print_step "Building (a few minutes the first time)"
-./Scripts/build-app.sh >/dev/null
+./Scripts/build-app.sh 2>&1 | grep -vE "replacing existing signature"
 
 APP="dist/Myna Flow.app"
 if [[ -d "/Applications/Myna Flow.app" ]]; then

@@ -9,16 +9,25 @@ existing_identity() {
     | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"'
 }
 
+# The certificate lives in its own keychain, not the login keychain. Importing
+# into the login keychain needs it unlocked and willing to show a dialog, and
+# on a fresh Mac — or over ssh, or under a management profile — it is neither:
+# `security import` fails with "User interaction is not allowed", and before
+# this change install.sh then quietly signed ad-hoc, which is the one outcome
+# this whole mechanism exists to prevent. A dedicated keychain with an empty
+# password, no auto-lock, and codesign pre-authorised never prompts anyone.
+MYNA_KEYCHAIN="$HOME/Library/Keychains/mynaflow-signing.keychain-db"
+
 have_local_cert() {
-  # No -v here: that filters to identities with a trusted chain, and a
-  # self-signed certificate never has one. It still signs perfectly well,
-  # and macOS only cares that the identity is stable between builds.
+  # No -v: that filters to identities with a trusted chain, and a self-signed
+  # certificate never has one. It still signs perfectly well.
   security find-identity -p codesigning 2>/dev/null | grep -q "\"$CERT_NAME\""
 }
 
+# Prints the reason on stderr when it fails; a silent failure here cost days.
 create_local_cert() {
-  local dir
-  dir=$(mktemp -d)
+  local dir log
+  dir=$(mktemp -d); log="$dir/steps.log"
   cat > "$dir/openssl.cnf" <<'CNF'
 [ req ]
 distinguished_name = dn
@@ -33,12 +42,24 @@ extendedKeyUsage = critical,codeSigning
 # Apple's "code signing" certificate marker.
 1.2.840.113635.100.6.1.13 = DER:0500
 CNF
-  openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-    -keyout "$dir/key.pem" -out "$dir/cert.pem" -config "$dir/openssl.cnf" >/dev/null 2>&1 || return 1
-  openssl pkcs12 -export -inkey "$dir/key.pem" -in "$dir/cert.pem" \
-    -out "$dir/id.p12" -name "$CERT_NAME" -passout pass:mynaflow >/dev/null 2>&1 || return 1
-  security import "$dir/id.p12" -k "$HOME/Library/Keychains/login.keychain-db" \
-    -P mynaflow -T /usr/bin/codesign -A >/dev/null 2>&1 || { rm -rf "$dir"; return 1; }
+  {
+    openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+      -keyout "$dir/key.pem" -out "$dir/cert.pem" -config "$dir/openssl.cnf" &&
+    openssl pkcs12 -export -inkey "$dir/key.pem" -in "$dir/cert.pem" \
+      -out "$dir/id.p12" -name "$CERT_NAME" -passout pass:mynaflow &&
+    { [[ -f "$MYNA_KEYCHAIN" ]] || security create-keychain -p "" "$MYNA_KEYCHAIN"; } &&
+    security set-keychain-settings "$MYNA_KEYCHAIN" &&           # no auto-lock, ever
+    security unlock-keychain -p "" "$MYNA_KEYCHAIN" &&
+    security import "$dir/id.p12" -k "$MYNA_KEYCHAIN" -P mynaflow -T /usr/bin/codesign -A &&
+    # Let codesign use the key without a prompt, and put the keychain where
+    # codesign and find-identity will look.
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$MYNA_KEYCHAIN" &&
+    security list-keychains -d user -s "$MYNA_KEYCHAIN" $(security list-keychains -d user | tr -d '"' | grep -v mynaflow-signing)
+  } >"$log" 2>&1 || {
+    print "create_local_cert failed:" >&2
+    grep -v "^\.\|^+\|^-----\|^Generating\|^writing" "$log" | tail -6 | sed 's/^/  /' >&2
+    rm -rf "$dir"; return 1
+  }
   rm -rf "$dir"
   have_local_cert
 }
