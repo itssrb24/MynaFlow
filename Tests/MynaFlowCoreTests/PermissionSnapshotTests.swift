@@ -62,6 +62,14 @@ struct PermissionSnapshotTests {
     #expect(s.mismatchWarnings.contains { $0.contains("translocated") })
   }
 
+  @Test("While translocated, the original in /Applications is not reported as a second copy")
+  func translocatedOriginalIsNotADuplicate() {
+    let me = identity(path: "/private/var/folders/x/AppTranslocation/y/d/Myna Flow.app", translocated: true)
+    let s = snapshot(app: me, others: [identity(path: "/Applications/Myna Flow.app")])
+    #expect(s.findings.count == 1)
+    #expect(s.findings[0].text.contains("translocated"))
+  }
+
   @Test("Accessibility off with nothing else wrong points at relaunch, then a profile")
   func accessibilityOffHint() {
     let off = snapshot(app: identity(path: "/Applications/Myna Flow.app"), accessibility: false)

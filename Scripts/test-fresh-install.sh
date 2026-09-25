@@ -68,7 +68,17 @@ case "$MODE" in
     # one to add the quarantine flag. Add it by hand: this is what makes macOS
     # show the "cannot verify the developer" dialog on first open.
     xattr -r -w com.apple.quarantine "0083;$(printf '%x' "$(date +%s)");Safari;$(uuidgen)" "$STAGED"
-    rm -rf "$INSTALLED"; cp -R "$STAGED" /Applications/
+    # A person drags the app from Downloads into Applications with Finder.
+    # That drag is what tells macOS the app has been "moved by the user"; a
+    # plain cp keeps the quarantine flag but not that fact, and the app then
+    # launches translocated from a read-only mirror under /private/var.
+    # Known limit: with a hand-written quarantine record even this Finder move
+    # still translocates, so a --release run will report translocation. Only a
+    # real Safari download dragged by hand is free of it (docs/TESTING.md).
+    rm -rf "$INSTALLED" "$HOME/Downloads/Myna Flow.app"
+    mv "$STAGED" "$HOME/Downloads/"
+    osascript -e 'tell application "Finder" to move (POSIX file "'"$HOME/Downloads/Myna Flow.app"'" as alias) to (POSIX file "/Applications" as alias)' >/dev/null
+    [[ -d "$INSTALLED" ]] || { print_bad "Finder did not move the app into /Applications"; exit 1; }
     ;;
   source)
     print_step "Installing from source$([[ $SELF_SIGNED == 1 ]] && print ' (self-signed, as a Mac with no developer certificate)')"

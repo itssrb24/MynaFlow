@@ -50,6 +50,9 @@ public struct PermissionSnapshot: Equatable, Sendable, Codable {
     for other in otherCopies {
       let same = mine.flatMap { m in other.parsedRequirement.map { m.sameIdentity(as: $0) } }
       if same == true {
+        // A translocated process is a read-only mirror of its original, so
+        // the original is not a second copy.
+        if app.isTranslocated { continue }
         out.append(
           .init(
             .info,
@@ -77,7 +80,7 @@ public struct PermissionSnapshot: Equatable, Sendable, Codable {
       out.append(
         .init(
           .warning,
-          "Running from a translocated path (\(app.bundlePath)). Move the app to /Applications and reopen it."
+          "Running from a translocated path (\(app.bundlePath)). macOS does this to a downloaded app that was opened in place or copied without Finder. Drag it into Applications with Finder and reopen it."
         ))
     }
     if !accessibility && otherCopies.isEmpty && !app.isAdHoc && app.signature != .unsigned {

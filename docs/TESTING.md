@@ -68,6 +68,16 @@ identity-change warning and Accessibility reading *off* until you re-add it.
 `--keep-models` sets the downloaded models aside and puts them back, so a run costs
 minutes rather than gigabytes.
 
+**`--release` is a stand-in, not the real download.** The harness stamps a
+quarantine record by hand, and macOS then launches the app *translocated* (from a
+read-only mirror under `/private/var/…/AppTranslocation`) no matter how it gets into
+`/Applications` — a Finder move scripted from the harness included. The report
+will say so. Use `--release` to check that the zip unpacks, signs and takes its
+grants; for the translocation question, do the real thing once per release:
+download the zip in Safari, drag **Myna Flow** from Downloads into Applications
+yourself, right-click ▸ Open, grant the three prompts, then
+`--print-permissions` must show `isTranslocated: false` and no findings.
+
 ## A real second Mac, on this Mac: Tart
 
 For the cases a reset cannot reach — Gatekeeper on a genuine download, a machine with
@@ -147,6 +157,18 @@ the app was granted on the spot, from the approval given minutes earlier — and
 pane showed **no row at all** while the app read granted. The pane is not the
 truth; `--print-permissions` is. That is the entire "granted but not granted" complaint,
 reproducible on demand.
+
+The real download, done by hand for 1.1.4 (Safari ▸ drag to Applications ▸
+right-click ▸ Open): Gatekeeper held the first launch in `dyld` for about ninety
+seconds while it scanned the bundle — the app looks hung, then simply appears —
+and after the grants the report read `microphone granted, accessibility true,
+inputMonitoring granted, isTranslocated false, otherCopies 0, findings 0`. The
+relaunched app logged `input monitoring granted — hotkeys can fire` and no findings
+line. Two things the pane got wrong on the way: Input Monitoring showed **no row**
+for Myna Flow while the app read it granted, and the quarantine flags on the bundle
+went `0083` → `0183` after the Finder drag — that bit, not the drag itself, is what
+spares the app from translocation, and a scripted `cp` or hand-written record never
+sets it.
 
 ## Why not just a second user account
 
