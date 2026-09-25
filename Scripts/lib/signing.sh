@@ -45,7 +45,9 @@ CNF
 
 # The designated requirement is what macOS keys a permission grant to.
 designated_requirement() {
-  codesign -d -r- "$1" 2>&1 | sed -n 's/^designated => //p'
+  # codesign prefixes an ad-hoc requirement with "# " — the one case where the
+  # warning matters most is the one a naive match silently skipped.
+  codesign -d -r- "$1" 2>&1 | sed -n 's/^#\{0,1\} *designated => //p'
 }
 
 signing_authority() {
