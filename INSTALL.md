@@ -150,8 +150,10 @@ while the checkbox stays on. Rebuild with the current `./Scripts/install.sh`,
 which creates a proper local certificate the first time and reuses it forever,
 then do step 2.
 
-**3. Re-add the permission.** Turning it off and on again is not enough, since
-the stale entry is what is broken:
+**3. Re-add the permission.** Turning it off and on again is not enough, and
+neither is quitting and reopening the app — both were tried, on a copy whose
+signature had just changed, and the app still read Input Monitoring as denied with
+the switch showing on. The row itself belongs to the old signature:
 
 1. System Settings ▸ Privacy & Security ▸ **Accessibility**
 2. Select **Myna Flow**, press the **–** button to remove it

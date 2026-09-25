@@ -133,6 +133,16 @@ printed, and `install.sh` refuses to fall back to ad-hoc unless you set
 `ALLOW_ADHOC=1` yourself. Verified in the VM: a first install mints the certificate,
 a second install keeps the identical designated requirement.
 
+### Seen live, on this Mac
+
+`test-fresh-install.sh --adhoc-first`, grant everything, then
+`--source --self-signed --no-reset`: System Settings kept showing one "Myna Flow"
+row switched on under both Accessibility and Input Monitoring, and the rebuilt app
+read Accessibility off and Input Monitoring denied. Quitting and reopening changed
+nothing. Only removing the row and adding the app again recovered it — the row was
+the old signature's. That is the entire "granted but not granted" complaint,
+reproducible on demand.
+
 ## Why not just a second user account
 
 It is tempting — `SrbGuest` is right there — but it only half works. Microphone and the
