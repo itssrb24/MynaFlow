@@ -132,7 +132,12 @@ re-enable it in System Settings"*. If you see that, work through this list.
 the same name — flagged if one is signed differently, which is the usual cause.
 **Copy report** puts it all on the clipboard.
 
-**2. Check how your copy is signed.**
+**2. Check how your copy is signed.** If your first install was before 1.1.4, it
+may be ad-hoc even though you built from source: the certificate step used to fail
+quietly on a Mac with a locked keychain and the script carried on. Re-run
+`./Scripts/install.sh` — it now keeps its certificate in its own keychain, prints
+the reason if anything fails, and stops rather than installing ad-hoc — then re-add
+the permission once (step 3). It stays from then on.
 
 ```bash
 codesign -dv "/Applications/Myna Flow.app" 2>&1 | grep -E "Signature|Authority"

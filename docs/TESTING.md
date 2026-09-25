@@ -89,7 +89,19 @@ tart clone mynaflow-golden mynaflow-test
 tart run mynaflow-test --dir=repo:$HOME/Documents/MynaFlow
 ```
 
-Inside the VM (user `admin`, password `admin`, or `ssh admin@$(tart ip mynaflow-test)`):
+From a script, use a shell *function* for ssh, not a string — zsh does not
+word-split `$SSH`, and "no such file or directory: sshpass -p admin ssh …" cost
+an hour looking like a network problem:
+
+```bash
+guest() { sshpass -p admin ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@"$IP" "$@"; }
+```
+
+There is no guest agent in this image (`tart exec` prints nothing); ssh is the
+way in. If SwiftPM complains that `build.db` is malformed after a clone, `rm -rf
+.build` — it is a copy-on-write artefact, not a project problem.
+
+Inside the VM (user `admin`, password `admin`):
 
 ```bash
 rsync -a --exclude .build --exclude dist "/Volumes/My Shared Files/repo/" ~/MynaFlow/
@@ -105,6 +117,21 @@ Accessibility list says *"configured by a profile"* and the grant keeps switchin
 itself off, that is the profile, and the report will show Accessibility flipping to
 off with no reinstall in between. Take that report to whoever manages the Mac.
 Also: no App Store or iCloud sign-in inside a VM, and two macOS VMs per host at most.
+
+## What the VM found on its first day
+
+On a fresh macOS 26 machine with no developer certificate, `install.sh` could not
+create its self-signed certificate — `security import` into the login keychain
+fails with *"User interaction is not allowed"* whenever that keychain is locked or
+cannot show a dialog — and then **silently installed ad-hoc**, which is precisely
+the state where the permission grant dies on every rebuild. It had worked on the
+development Mac only because that keychain was unlocked with a window server behind
+it. Since 1.1.4 the certificate lives in its own keychain
+(`~/Library/Keychains/mynaflow-signing.keychain-db`, empty password, no auto-lock,
+codesign pre-authorised) so it never needs a dialog, the reason for any failure is
+printed, and `install.sh` refuses to fall back to ad-hoc unless you set
+`ALLOW_ADHOC=1` yourself. Verified in the VM: a first install mints the certificate,
+a second install keeps the identical designated requirement.
 
 ## Why not just a second user account
 
