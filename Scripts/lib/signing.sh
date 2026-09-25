@@ -51,7 +51,15 @@ designated_requirement() {
 }
 
 signing_authority() {
-  codesign -dvv "$1" 2>&1 | sed -n 's/^Authority=//p' | head -1
+  # An ad-hoc signature has no certificate and so no Authority= line; say so
+  # rather than printing an empty name into a sentence.
+  local out
+  out=$(codesign -dvv "$1" 2>&1)
+  if print -r -- "$out" | grep -q '^Signature=adhoc'; then
+    print "ad-hoc (no certificate)"
+  else
+    print -r -- "$out" | sed -n 's/^Authority=//p' | head -1
+  fi
 }
 
 # Ask an installed copy for its own permission report. Must go through Launch
