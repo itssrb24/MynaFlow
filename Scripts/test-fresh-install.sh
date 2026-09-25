@@ -102,9 +102,18 @@ fi
 
 grant() { plutil -extract "$1" raw -o - "$2" 2>/dev/null || print "?" }
 print_step "Baseline, before launch"
-print_permissions "$INSTALLED" "$SCRATCH/before.json" || { print_bad "--print-permissions produced nothing"; exit 1; }
-printf '  %-18s mic=%s  accessibility=%s  input-monitoring=%s\n' before \
-  "$(grant microphone "$SCRATCH/before.json")" "$(grant accessibility "$SCRATCH/before.json")" "$(grant inputMonitoring "$SCRATCH/before.json")"
+if print_permissions "$INSTALLED" "$SCRATCH/before.json"; then
+  printf '  %-18s mic=%s  accessibility=%s  input-monitoring=%s\n' before \
+    "$(grant microphone "$SCRATCH/before.json")" "$(grant accessibility "$SCRATCH/before.json")" "$(grant inputMonitoring "$SCRATCH/before.json")"
+elif [[ "$MODE" == release ]]; then
+  # Gatekeeper will not let `open` launch a quarantined, un-notarized app at
+  # all until a person has done right-click > Open once. That is the point
+  # of this mode, so the baseline is simply unavailable until then.
+  print "  (quarantined: no baseline until you have opened it once yourself)"
+  print '{"microphone":"notDetermined","accessibility":false,"inputMonitoring":"notDetermined"}' > "$SCRATCH/before.json"
+else
+  print_bad "--print-permissions produced nothing"; exit 1
+fi
 
 print_step "Launching"
 if [[ "$MODE" == release ]]; then
