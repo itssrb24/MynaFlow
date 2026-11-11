@@ -65,6 +65,8 @@ struct MynaFlowApp: App {
 
   private var menuBarSymbol: String {
     switch coordinator.menuBarState {
+    // A meeting recording stays visible in the menu bar for its whole length.
+    case .idle where coordinator.meetings.isRecording: "record.circle"
     case .idle: "mic"
     case .recording: "mic.fill"
     case .processing: "waveform"
@@ -146,6 +148,10 @@ struct MenuBarMenu: View {
       .disabled(coordinator.recentDictations.isEmpty)
     Button("Undo Last Dictation") { coordinator.undoLastDictation() }
     Button("Open Scratchpad") { coordinator.openScratchpad() }
+    Button(coordinator.meetings.isRecording ? "Stop Meeting Notes" : "Start Meeting Notes") {
+      coordinator.meetings.toggle()
+    }
+    .disabled(coordinator.meetings.phase == .finishing)
     Divider()
     if coordinator.recentDictations.isEmpty {
       Text("No dictations yet")

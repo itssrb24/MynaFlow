@@ -11,6 +11,8 @@ final class AppCoordinator {
   nonisolated private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "app")
 
   let indicator = IndicatorModel()
+  /// Meeting notes: explicit start/stop, its own indicator and capture.
+  let meetings = MeetingRecorder()
   private(set) var recentDictations: [DictationRecord] = []
   private(set) var menuBarState: MenuBarState = .idle
 
@@ -222,6 +224,7 @@ final class AppCoordinator {
       installHotkeys()
       installSleepWakeHandling()
       await buildLanguageProvider(paths: paths, store: store)
+      await configureMeetings(store: store, scratch: paths.scratch)
 
       // Pre-warm off the critical path so cold launch → ready stays fast.
       Task.detached(priority: .utility) {
@@ -286,6 +289,8 @@ final class AppCoordinator {
   func shutdown() async {
     diag("shutdown")
     session?.handle(.cancel)
+    // Quitting mid-meeting deletes its audio; nothing half-recorded is kept.
+    await meetings.cancel()
     await languageProvider?.stop()
     await store?.close()
   }
@@ -350,6 +355,24 @@ final class AppCoordinator {
       }
     }
     return controller
+  }
+
+  /// Meetings always prefer Parakeet when installed and fall back to Apple
+  /// Speech per chunk, independent of the dictation engine choice. The model
+  /// is read at each start, so installing one later takes effect next time.
+  private func configureMeetings(store: FlowStore, scratch: URL) async {
+    meetings.setInputDevice(selectedInputUID)
+    await meetings.configure(
+      store: store, scratch: scratch,
+      transcriber: { [weak self] in
+        guard let apple = self?.appleEngine else { return nil }
+        guard let parakeet = self?.parakeetEngine else { return apple }
+        return EngineCoordinator(primary: parakeet, fallback: apple)
+      },
+      model: { [weak self] in
+        guard let self, self.polishModelInstalled, let provider = self.languageProvider else { return nil }
+        return provider
+      })
   }
 
   private func transcriptionProvider() -> any TranscriptionProviding {
@@ -1142,6 +1165,7 @@ final class AppCoordinator {
   func selectInputDevice(uid: String?) {
     selectedInputUID = uid
     capture.preferredDeviceUID = uid
+    meetings.setInputDevice(uid)
     Task {
       await persist("save microphone choice") {
         try await store?.setSetting(uid ?? "", forKey: "input_device_uid")

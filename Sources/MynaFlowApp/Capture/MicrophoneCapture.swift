@@ -29,6 +29,10 @@ final class MicrophoneCapture {
 
   /// Capture device UID; nil follows the system default input.
   var preferredDeviceUID: String?
+  /// Whether voice processing may duck other apps' audio. Dictation keeps the
+  /// system default; meeting notes turn it off, since the "other audio" is
+  /// the call itself.
+  var duckOtherAudio = true
   /// Fires when the engine's input graph changes underneath a running
   /// capture — device unplugged, default input switched, or a wake from
   /// sleep. The stream is finished; the owner decides what to do with the
@@ -58,6 +62,11 @@ final class MicrophoneCapture {
     do {
       try input.setVoiceProcessingEnabled(true)
       voiceProcessingActive = true
+      if !duckOtherAudio {
+        input.voiceProcessingOtherAudioDuckingConfiguration =
+          AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
+            enableAdvancedDucking: false, duckingLevel: .min)
+      }
     } catch {
       Self.log.warning("voice processing unavailable: \(error.localizedDescription)")
     }
