@@ -142,6 +142,47 @@ struct MeetingSessionTests {
     }
     #expect(record.segments.map(\.text) == ["you#0", "you#2"])
     #expect(audioFiles(in: scratch).isEmpty)
+    // The gap is never silent: the saved note says audio went untranscribed.
+    #expect(record.summaryNote?.contains("1 part of the audio could not be transcribed") == true)
+  }
+
+  @Test("a silent chunk is deleted without transcription and is not reported as a gap")
+  func silentChunkSkipped() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch)
+
+    try await session.start()
+    await session.append(frame(seconds: 1), channel: .you)
+    await session.append(
+      AudioFrame(samples: Array(repeating: 0, count: Int(rate)), sampleRate: rate), channel: .others)
+    let result = await session.stop()
+    guard case .saved(let record) = result else {
+      Issue.record("expected saved, got \(result)")
+      return
+    }
+    #expect(await transcriber.seen.count == 1)
+    #expect(record.summaryNote == MeetingSummarizer.noModelNote)
+    #expect(audioFiles(in: scratch).isEmpty)
+  }
+
+  @Test("a second concurrent stop does not save the meeting twice")
+  func doubleStopSavesOnce() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch)
+
+    try await session.start()
+    await session.append(frame(seconds: 1.5), channel: .you)
+    async let first = session.stop()
+    async let second = session.stop()
+    let results = await [first, second]
+
+    #expect(results.filter { if case .saved = $0 { true } else { false } }.count == 1)
+    #expect(results.contains(.notRecording))
+    #expect(await store.meetings.count == 1)
   }
 
   @Test("cancel deletes completed, in-flight and partial chunks and saves nothing")

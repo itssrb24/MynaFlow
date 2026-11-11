@@ -37,7 +37,13 @@ public actor MeetingSession {
     var url: URL
     var index: Int
     var completedSeconds: Double
+    /// Loudest sample so far; a chunk that never rises above the silence
+    /// floor is deleted untranscribed rather than reported as a gap.
+    var peak: Float = 0
   }
+
+  /// About -50 dBFS: below anything a voice on a call produces.
+  static let silenceFloor: Float = 0.003
 
   private let transcriber: any TranscriptionProviding
   private let summarizer: MeetingSummarizer
@@ -58,7 +64,14 @@ public actor MeetingSession {
   private var finishedDurations: [MeetingChannel: Double] = [:]
   private var transcriptionChain: Task<Void, Never>?
   private var cancelled = false
+  /// Set for the whole of stop(); a second stop, a cancel once saving has
+  /// begun, or a new start cannot interleave with it across its awaits.
+  private var stopping = false
+  private var saving = false
   private var writeFailure: String?
+  /// Chunks the engines could not read. Their audio is gone, so the saved
+  /// note must say the transcript has gaps.
+  private var untranscribedChunks = 0
 
   public init(
     transcriber: any TranscriptionProviding,
@@ -84,13 +97,14 @@ public actor MeetingSession {
   }
 
   public func start() throws {
-    guard startedAt == nil else { return }
+    guard startedAt == nil, !stopping else { return }
     try FileManager.default.createDirectory(
       at: scratchDirectory, withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700])
     sessionID = UUID()
     cancelled = false
     writeFailure = nil
+    untranscribedChunks = 0
     segments = []
     completedChunks = [:]
     do {
@@ -109,6 +123,7 @@ public actor MeetingSession {
     guard isRecording, writeFailure == nil, var track = tracks[channel] else { return }
     do {
       try track.writer.append(frame)
+      track.peak = max(track.peak, frame.samples.lazy.map(abs).max() ?? 0)
       tracks[channel] = track
       if track.writer.durationSeconds >= chunkSeconds {
         try rotate(channel)
@@ -122,7 +137,12 @@ public actor MeetingSession {
 
   /// Ends capture, transcribes the remaining audio, summarizes, saves.
   public func stop() async -> MeetingStopResult {
-    guard let startedAt, !cancelled else { return .notRecording }
+    guard let startedAt, !cancelled, !stopping else { return .notRecording }
+    stopping = true
+    defer {
+      stopping = false
+      saving = false
+    }
     for channel in MeetingChannel.allCases {
       closeTrack(channel)
     }
@@ -140,7 +160,11 @@ public actor MeetingSession {
       durationSeconds: duration,
       segments: merged,
       summary: Self.summary(outcome),
-      summaryNote: Self.note(outcome, writeFailure: writeFailure))
+      summaryNote: Self.note(
+        outcome, writeFailure: writeFailure, untranscribed: untranscribedChunks))
+    // Past this point the meeting is being written; a cancel can no longer
+    // un-save it, so it is ignored rather than half-honoured.
+    saving = true
     do {
       try await store.insertMeeting(record)
     } catch {
@@ -152,7 +176,7 @@ public actor MeetingSession {
   /// Abandons the meeting: deletes every chunk now, saves nothing. Does not
   /// wait for an in-flight transcription; its result is discarded.
   public func cancel() {
-    guard startedAt != nil, !cancelled else { return }
+    guard startedAt != nil, !cancelled, !saving else { return }
     cancelled = true
     startedAt = nil
     transcriptionChain?.cancel()
@@ -189,7 +213,7 @@ public actor MeetingSession {
     let duration = track.writer.durationSeconds
     let finished = (try? track.writer.finish()) != nil
     finishedDurations[channel] = track.completedSeconds + duration
-    guard finished, track.writer.samplesWritten > 0 else {
+    guard finished, track.writer.samplesWritten > 0, track.peak >= Self.silenceFloor else {
       delete(track.url)
       return
     }
@@ -210,10 +234,17 @@ public actor MeetingSession {
   private func transcribe(_ chunk: Chunk) async {
     defer { delete(chunk.url) }
     guard !cancelled, !Task.isCancelled else { return }
-    let outcome = try? await transcriber.transcribe(audio: chunk.url, hints: [])
-    guard !cancelled, let text = outcome?.result.text.trimmingCharacters(in: .whitespacesAndNewlines),
-      !text.isEmpty
-    else { return }
+    let outcome: EngineOutcome
+    do {
+      outcome = try await transcriber.transcribe(audio: chunk.url, hints: [])
+    } catch {
+      // Silence also lands here ("nothing recognized"); either way the
+      // note records that this stretch has no text.
+      if !cancelled { untranscribedChunks += 1 }
+      return
+    }
+    let text = outcome.result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !cancelled, !text.isEmpty else { return }
     segments.append(
       MeetingSegment(channel: chunk.channel, startSeconds: chunk.startSeconds, text: text))
   }
@@ -249,14 +280,21 @@ public actor MeetingSession {
     return nil
   }
 
-  private static func note(_ outcome: MeetingSummaryOutcome, writeFailure: String?) -> String? {
+  private static func note(
+    _ outcome: MeetingSummaryOutcome, writeFailure: String?, untranscribed: Int
+  ) -> String? {
     let summaryNote: String? =
       switch outcome {
       case .summarized: nil
       case .unavailable(let reason): reason
       case .failed(let reason): "No summary: \(reason) The transcript was saved."
       }
-    let notes = [writeFailure, summaryNote].compactMap { $0 }
+    let gaps: String? =
+      untranscribed == 0
+      ? nil
+      : "\(untranscribed) part\(untranscribed == 1 ? "" : "s") of the audio could not be "
+        + "transcribed (silence or an engine failure), so the transcript may have gaps."
+    let notes = [writeFailure, gaps, summaryNote].compactMap { $0 }
     return notes.isEmpty ? nil : notes.joined(separator: " ")
   }
 }

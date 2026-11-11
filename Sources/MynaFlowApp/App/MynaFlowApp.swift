@@ -151,7 +151,7 @@ struct MenuBarMenu: View {
     Button(coordinator.meetings.isRecording ? "Stop Meeting Notes" : "Start Meeting Notes") {
       coordinator.meetings.toggle()
     }
-    .disabled(coordinator.meetings.phase == .finishing)
+    .disabled(coordinator.meetings.phase == .starting || coordinator.meetings.phase == .finishing)
     Divider()
     if coordinator.recentDictations.isEmpty {
       Text("No dictations yet")

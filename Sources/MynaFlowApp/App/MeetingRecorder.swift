@@ -14,6 +14,8 @@ final class MeetingRecorder {
 
   enum Phase: Equatable {
     case idle
+    /// Between the click and both captures running; blocks a second start.
+    case starting
     case recording
     case finishing
   }
@@ -59,7 +61,7 @@ final class MeetingRecorder {
       switch phase {
       case .idle: await start()
       case .recording: await stop()
-      case .finishing: break
+      case .starting, .finishing: break
       }
     }
   }
@@ -70,6 +72,7 @@ final class MeetingRecorder {
       return
     }
     notice = nil
+    phase = .starting
     let session = MeetingSession(
       transcriber: transcriber,
       summarizer: MeetingSummarizer(model: currentModel()),
@@ -92,6 +95,7 @@ final class MeetingRecorder {
       await session.cancel()
       self.session = nil
       notice = error.localizedDescription
+      phase = .idle
       return
     }
     phase = .recording

@@ -82,19 +82,11 @@ final class SystemAudioCapture {
     let stream = AsyncStream<AudioFrame>(bufferingPolicy: .bufferingNewest(512)) {
       self.continuation = $0
     }
-    let continuation = self.continuation
-    let sampleRate = format.sampleRate
+    let ioBlock = Self.makeIOBlock(format: format, continuation: self.continuation)
     try check(
-      "create IO proc",
-      AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, queue) { _, input, _, _, _ in
-        guard
-          let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: input),
-          let frame = Self.monoFrame(buffer, sampleRate: sampleRate)
-        else { return }
-        continuation?.yield(frame)
-      })
+      "create IO proc", AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, queue, ioBlock))
     try check("start device", AudioDeviceStart(aggregateID, procID))
-    Self.log.info("system audio tap started at \(sampleRate) Hz")
+    Self.log.info("system audio tap started at \(format.sampleRate) Hz")
     return stream
   }
 
@@ -117,6 +109,22 @@ final class SystemAudioCapture {
   }
 
   // MARK: - Helpers
+
+  /// Built outside the main actor on purpose: a closure written inside a
+  /// @MainActor method inherits that isolation, and Swift 6 would trap when
+  /// Core Audio calls it on the IO queue.
+  nonisolated private static func makeIOBlock(
+    format: AVAudioFormat, continuation: AsyncStream<AudioFrame>.Continuation?
+  ) -> AudioDeviceIOBlock {
+    let sampleRate = format.sampleRate
+    return { _, input, _, _, _ in
+      guard
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: input),
+        let frame = monoFrame(buffer, sampleRate: sampleRate)
+      else { return }
+      continuation?.yield(frame)
+    }
+  }
 
   /// Averages every channel to mono; a mono tap is a straight copy.
   nonisolated private static func monoFrame(_ buffer: AVAudioPCMBuffer, sampleRate: Double)

@@ -67,13 +67,13 @@ struct MeetingsView: View {
           .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
       }
       Spacer()
-      if recorder.phase != .idle {
+      if recorder.phase == .recording || recorder.phase == .finishing {
         Button("Discard") { Task { await recorder.cancel() } }
           .buttonStyle(NeuButtonStyle(destructive: true))
       }
       Button(recorder.isRecording ? "Stop & Summarize" : "Start Meeting Notes") { recorder.toggle() }
         .buttonStyle(NeuButtonStyle(prominent: true))
-        .disabled(recorder.phase == .finishing)
+        .disabled(recorder.phase == .starting || recorder.phase == .finishing)
     }
     .raised()
   }
@@ -81,6 +81,7 @@ struct MeetingsView: View {
   private var statusTitle: String {
     switch recorder.phase {
     case .idle: "Not recording"
+    case .starting: "Starting…"
     case .recording: "Recording meeting…"
     case .finishing: "Transcribing the last minute and summarizing…"
     }
