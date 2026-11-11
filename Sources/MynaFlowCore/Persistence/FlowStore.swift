@@ -708,6 +708,22 @@ public actor FlowStore {
     [
       "DROP TABLE IF EXISTS app_rules"
     ],
+    // v8: meeting notes. Transcript segments and summary lists are JSON; no
+    // audio is ever stored.
+    [
+      """
+      CREATE TABLE meetings (
+        id TEXT PRIMARY KEY,
+        started_at REAL NOT NULL,
+        duration_seconds REAL NOT NULL,
+        segments TEXT NOT NULL,
+        key_points TEXT,
+        action_items TEXT,
+        summary_note TEXT
+      )
+      """,
+      "CREATE INDEX idx_meetings_started_at ON meetings(started_at)",
+    ],
   ]
 
   private func migrate() throws {
@@ -787,7 +803,7 @@ public actor FlowStore {
     }
   }
 
-  private func run(_ sql: String, bind: (OpaquePointer) -> Void) throws {
+  func run(_ sql: String, bind: (OpaquePointer) -> Void) throws {
     let database = try requireHandle()
     var statement: OpaquePointer?
     guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
@@ -800,7 +816,7 @@ public actor FlowStore {
     }
   }
 
-  private func query<Row>(
+  func query<Row>(
     _ sql: String, bind: (OpaquePointer) -> Void, row: (OpaquePointer) throws -> Row
   ) throws -> [Row] {
     let database = try requireHandle()
