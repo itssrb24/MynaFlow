@@ -41,6 +41,10 @@ public struct SpeechEngineError: Error, Equatable, CustomStringConvertible, Send
   }
 
   public var description: String { "SpeechEngine: \(message)" }
+
+  /// The audio held no words the engine could pick out — silence or room
+  /// noise, not a failure. Callers that care tell the two apart with this.
+  public static let nothingRecognized = SpeechEngineError("nothing recognized")
 }
 
 /// One speech engine. Adding an engine means one conformance plus a catalog

@@ -144,7 +144,7 @@ actor ParakeetEngine: SpeechEngine, TranscriptionProviding {
     let (samples, duration) = try Self.read16kMono(from: audio)
     let text = try await manager.transcribe(samples)
       .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { throw SpeechEngineError("nothing recognized") }
+    guard !text.isEmpty else { throw SpeechEngineError.nothingRecognized }
     return TranscriptionResult(text: text, durationSeconds: duration)
   }
 

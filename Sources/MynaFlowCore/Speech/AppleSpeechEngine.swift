@@ -117,7 +117,7 @@ public actor AppleSpeechEngine: SpeechEngine {
     _ = analyzer
     let text = pieces.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else {
-      throw SpeechEngineError("nothing recognized")
+      throw SpeechEngineError.nothingRecognized
     }
     return TranscriptionResult(text: text, durationSeconds: durationSeconds)
   }

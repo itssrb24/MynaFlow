@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// The slice of the store a meeting needs. FlowStore conforms; tests fake it.
 public protocol MeetingStoring: Sendable {
@@ -44,6 +45,8 @@ public actor MeetingSession {
 
   /// About -50 dBFS: below anything a voice on a call produces.
   static let silenceFloor: Float = 0.003
+  /// Chunk lifecycle only — channel, length, level, outcome. Never text.
+  private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "meeting")
 
   private let transcriber: any TranscriptionProviding
   private let summarizer: MeetingSummarizer
@@ -213,6 +216,9 @@ public actor MeetingSession {
     let duration = track.writer.durationSeconds
     let finished = (try? track.writer.finish()) != nil
     finishedDurations[channel] = track.completedSeconds + duration
+    Self.log.info(
+      "chunk \(channel.label, privacy: .public)-\(track.index): \(duration, format: .fixed(precision: 1))s peak \(track.peak, format: .fixed(precision: 4)) written=\(finished)"
+    )
     guard finished, track.writer.samplesWritten > 0, track.peak >= Self.silenceFloor else {
       delete(track.url)
       return
@@ -237,14 +243,24 @@ public actor MeetingSession {
     let outcome: EngineOutcome
     do {
       outcome = try await transcriber.transcribe(audio: chunk.url, hints: [])
+    } catch let error as SpeechEngineError where error == .nothingRecognized {
+      // Room noise above the silence floor but no words: nothing was lost.
+      Self.log.info(
+        "chunk \(chunk.channel.label, privacy: .public) at \(chunk.startSeconds)s: no speech")
+      return
     } catch {
-      // Silence also lands here ("nothing recognized"); either way the
-      // note records that this stretch has no text.
+      // A real engine failure: the note records that this stretch has no text.
+      Self.log.error(
+        "chunk \(chunk.channel.label, privacy: .public) at \(chunk.startSeconds)s not transcribed: \(String(describing: type(of: error)), privacy: .public)"
+      )
       if !cancelled { untranscribedChunks += 1 }
       return
     }
     let text = outcome.result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !cancelled, !text.isEmpty else { return }
+    Self.log.info(
+      "chunk \(chunk.channel.label, privacy: .public) at \(chunk.startSeconds)s → \(text.count) chars")
+    // Punctuation alone (a lone ".") is engine noise, not speech.
+    guard !cancelled, text.contains(where: { $0.isLetter || $0.isNumber }) else { return }
     segments.append(
       MeetingSegment(channel: chunk.channel, startSeconds: chunk.startSeconds, text: text))
   }
@@ -293,7 +309,7 @@ public actor MeetingSession {
       untranscribed == 0
       ? nil
       : "\(untranscribed) part\(untranscribed == 1 ? "" : "s") of the audio could not be "
-        + "transcribed (silence or an engine failure), so the transcript may have gaps."
+        + "transcribed (the speech engine failed), so the transcript may have gaps."
     let notes = [writeFailure, gaps, summaryNote].compactMap { $0 }
     return notes.isEmpty ? nil : notes.joined(separator: " ")
   }

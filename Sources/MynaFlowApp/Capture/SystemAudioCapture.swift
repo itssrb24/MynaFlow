@@ -35,6 +35,7 @@ final class SystemAudioCapture {
   private var aggregateID = AudioObjectID(kAudioObjectUnknown)
   private var procID: AudioDeviceIOProcID?
   private var continuation: AsyncStream<AudioFrame>.Continuation?
+  private var stats: TapStats?
   private let queue = DispatchQueue(label: "com.itssrb24.MynaFlow.system-audio", qos: .userInitiated)
 
   var isRunning: Bool { procID != nil }
@@ -82,7 +83,10 @@ final class SystemAudioCapture {
     let stream = AsyncStream<AudioFrame>(bufferingPolicy: .bufferingNewest(512)) {
       self.continuation = $0
     }
-    let ioBlock = Self.makeIOBlock(format: format, continuation: self.continuation)
+    Self.log.info("tap format: \(format.description, privacy: .public)")
+    let stats = TapStats()
+    self.stats = stats
+    let ioBlock = Self.makeIOBlock(format: format, continuation: self.continuation, stats: stats)
     try check(
       "create IO proc", AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, queue, ioBlock))
     try check("start device", AudioDeviceStart(aggregateID, procID))
@@ -91,6 +95,10 @@ final class SystemAudioCapture {
   }
 
   func stop() {
+    if let stats {
+      Self.log.info("system audio tap stopped: \(stats.summary, privacy: .public)")
+    }
+    stats = nil
     if let procID {
       AudioDeviceStop(aggregateID, procID)
       AudioDeviceDestroyIOProcID(aggregateID, procID)
@@ -114,36 +122,23 @@ final class SystemAudioCapture {
   /// @MainActor method inherits that isolation, and Swift 6 would trap when
   /// Core Audio calls it on the IO queue.
   nonisolated private static func makeIOBlock(
-    format: AVAudioFormat, continuation: AsyncStream<AudioFrame>.Continuation?
+    format: AVAudioFormat, continuation: AsyncStream<AudioFrame>.Continuation?,
+    stats: TapStats
   ) -> AudioDeviceIOBlock {
     let sampleRate = format.sampleRate
+    let tapChannels = Int(format.channelCount)
     return { _, input, _, _, _ in
-      guard
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: input),
-        let frame = monoFrame(buffer, sampleRate: sampleRate)
-      else { return }
+      let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+      stats.noteCallback(layout: buffers.map { ($0.mNumberChannels, $0.mDataByteSize) })
+      guard let samples = TapBufferReader.monoSamples(from: buffers, tapChannels: tapChannels)
+      else {
+        stats.noteRejected()
+        return
+      }
+      let frame = AudioFrame(samples: samples, sampleRate: sampleRate)
+      stats.noteFrame(frame)
       continuation?.yield(frame)
     }
-  }
-
-  /// Averages every channel to mono; a mono tap is a straight copy.
-  nonisolated private static func monoFrame(_ buffer: AVAudioPCMBuffer, sampleRate: Double)
-    -> AudioFrame?
-  {
-    guard let channels = buffer.floatChannelData, buffer.frameLength > 0 else { return nil }
-    let count = Int(buffer.frameLength)
-    let channelCount = Int(buffer.format.channelCount)
-    let stride = buffer.stride
-    var samples = [Float](repeating: 0, count: count)
-    for channel in 0..<channelCount {
-      let data = channels[channel]
-      for index in 0..<count { samples[index] += data[index * stride] }
-    }
-    if channelCount > 1 {
-      let scale = 1 / Float(channelCount)
-      for index in 0..<count { samples[index] *= scale }
-    }
-    return AudioFrame(samples: samples, sampleRate: sampleRate)
   }
 
   private func check(_ step: String, _ status: OSStatus) throws {

@@ -11,9 +11,13 @@ import Testing
 private actor ChunkNamingTranscriber: TranscriptionProviding {
   private(set) var seen: [String] = []
   var failingChunkNames: Set<String> = []
+  var quietChunkNames: Set<String> = []
+  var punctuationChunkNames: Set<String> = []
   var hook: (@Sendable () async -> Void)?
 
   func setFailing(_ names: Set<String>) { failingChunkNames = names }
+  func setQuiet(_ names: Set<String>) { quietChunkNames = names }
+  func setPunctuationOnly(_ names: Set<String>) { punctuationChunkNames = names }
   func setHook(_ hook: @escaping @Sendable () async -> Void) { self.hook = hook }
 
   func prewarm() async {}
@@ -24,7 +28,15 @@ private actor ChunkNamingTranscriber: TranscriptionProviding {
     #expect(FileManager.default.fileExists(atPath: audio.path))
     if let hook { await hook() }
     if failingChunkNames.contains(where: { name.hasSuffix($0) }) {
-      throw SpeechEngineError("nothing recognized")
+      throw SpeechEngineError("engine crashed")
+    }
+    if quietChunkNames.contains(where: { name.hasSuffix($0) }) {
+      throw SpeechEngineError.nothingRecognized
+    }
+    if punctuationChunkNames.contains(where: { name.hasSuffix($0) }) {
+      return EngineOutcome(
+        result: TranscriptionResult(text: " . ", durationSeconds: 1),
+        engineUsed: .parakeet, fallbackOccurred: false)
     }
     // meeting-<uuid>-<channel>-<index>
     let parts = name.split(separator: "-")
@@ -144,6 +156,45 @@ struct MeetingSessionTests {
     #expect(audioFiles(in: scratch).isEmpty)
     // The gap is never silent: the saved note says audio went untranscribed.
     #expect(record.summaryNote?.contains("1 part of the audio could not be transcribed") == true)
+  }
+
+  @Test("room noise the engine recognizes nothing in is not reported as a gap")
+  func nothingRecognizedIsNotAGap() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    await transcriber.setQuiet(["you-1"])
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch)
+
+    try await session.start()
+    for _ in 0..<3 { await session.append(frame(seconds: 1), channel: .you) }
+    let result = await session.stop()
+    guard case .saved(let record) = result else {
+      Issue.record("expected saved, got \(result)")
+      return
+    }
+    #expect(record.segments.map(\.text) == ["you#0", "you#2"])
+    #expect(record.summaryNote == MeetingSummarizer.noModelNote)
+    #expect(audioFiles(in: scratch).isEmpty)
+  }
+
+  @Test("a chunk transcribed as punctuation only adds no segment")
+  func punctuationOnlyDropped() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    await transcriber.setPunctuationOnly(["you-1"])
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch)
+
+    try await session.start()
+    for _ in 0..<3 { await session.append(frame(seconds: 1), channel: .you) }
+    let result = await session.stop()
+    guard case .saved(let record) = result else {
+      Issue.record("expected saved, got \(result)")
+      return
+    }
+    #expect(record.segments.map(\.text) == ["you#0", "you#2"])
+    #expect(record.summaryNote == MeetingSummarizer.noModelNote)
   }
 
   @Test("a silent chunk is deleted without transcription and is not reported as a gap")
