@@ -65,6 +65,15 @@ private actor Gate {
   }
 }
 
+/// A language model that only counts how often it is asked.
+private actor CountingModel: LocalLanguageModel {
+  private(set) var calls = 0
+  func generateInstruction(_ instruction: String, maxTokens: Int) async throws -> String {
+    calls += 1
+    return "KEY POINTS\n- Ship it\nACTION ITEMS\n- None"
+  }
+}
+
 private actor FakeMeetingStore: MeetingStoring {
   private(set) var meetings: [MeetingRecord] = []
   var failInsert = false
@@ -358,6 +367,30 @@ struct MeetingSessionTests {
     }
     #expect(record.segments.map(\.text) == ["you#0"])
     #expect(record.summaryNote?.contains("Could not write meeting audio") == true)
+  }
+
+  @Test("quitting mid-meeting saves the transcript without summarizing, with a note")
+  func transcriptOnlyStop() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    let store = FakeMeetingStore()
+    let model = CountingModel()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch, model: model)
+
+    try await session.start(title: "Weekly sync")
+    await session.append(frame(seconds: 1.5), channel: .you)
+    let result = await session.stop(summarize: false, cutShortNote: "Saved when Myna Flow quit.")
+
+    guard case .saved(let record) = result else {
+      Issue.record("expected saved, got \(result)")
+      return
+    }
+    #expect(await model.calls == 0)
+    #expect(record.summary == nil)
+    #expect(record.segments.map(\.text) == ["you#0"])
+    #expect(record.summaryNote == "Saved when Myna Flow quit.")
+    #expect(record.eventTitle == "Weekly sync")
+    #expect(audioFiles(in: scratch).isEmpty)
   }
 
   @Test("a store failure still deletes audio and hands back the transcript")

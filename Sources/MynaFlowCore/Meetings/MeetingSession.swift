@@ -155,7 +155,12 @@ public actor MeetingSession {
   }
 
   /// Ends capture, transcribes the remaining audio, summarizes, saves.
-  public func stop() async -> MeetingStopResult {
+  ///
+  /// `summarize: false` is for when time is short (the app is quitting): the
+  /// transcript is saved without a summary and `cutShortNote` says why.
+  public func stop(summarize: Bool = true, cutShortNote: String? = nil) async
+    -> MeetingStopResult
+  {
     guard let startedAt, !cancelled, !stopping else { return .notRecording }
     stopping = true
     defer {
@@ -171,7 +176,10 @@ public actor MeetingSession {
     guard !cancelled else { return finish(.cancelled) }
 
     let merged = MeetingTranscript.merge(segments)
-    let outcome = await summarizer.summarize(merged)
+    let outcome =
+      summarize
+      ? await summarizer.summarize(merged)
+      : .unavailable(cutShortNote ?? "Not summarized.")
     guard !cancelled else { return finish(.cancelled) }
 
     let record = MeetingRecord(

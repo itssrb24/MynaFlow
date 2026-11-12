@@ -82,9 +82,16 @@ final class MeetingRecorder {
       summarizer: MeetingSummarizer(model: currentModel()),
       store: store,
       scratchDirectory: scratch)
+    // Registered before the first await, so a quit or Discard during
+    // `.starting` can find and cancel it.
+    self.session = session
     do {
       try await session.start(title: title)
-      self.session = session
+      guard phase == .starting else {
+        // Cancelled while the session was opening; close what it opened.
+        await session.cancel()
+        return
+      }
       let others = try system.start()
       mic.duckOtherAudio = false
       let you = try mic.start { [weak self] level in self?.indicator.submitAudioLevel(level) }
@@ -136,9 +143,65 @@ final class MeetingRecorder {
     hideIndicatorSoon()
   }
 
+  /// The app is quitting (or the Mac is restarting): keep what was said.
+  /// Finishes the audio already captured and saves the transcript without
+  /// a summary. If that takes longer than `limit`, the audio is discarded so
+  /// quitting is never held up.
+  func finishForQuit(limit: Duration = .seconds(8)) async {
+    switch phase {
+    case .idle:
+      return
+    case .starting:
+      await cancel()
+      return
+    case .finishing:
+      // A stop is already saving; give it the same allowance.
+      _ = await Self.first(of: Task { await self.waitUntilIdle() }, within: limit)
+      return
+    case .recording:
+      break
+    }
+    guard let session else { return }
+    phase = .finishing
+    timer?.cancel()
+    await teardownCaptures()
+    let save = Task {
+      await session.stop(summarize: false, cutShortNote: Self.quitNote)
+    }
+    if await Self.first(of: save, within: limit) == nil {
+      Self.log.error("meeting save on quit timed out; audio discarded")
+      await session.cancel()
+    }
+    self.session = nil
+    phase = .idle
+  }
+
+  static let quitNote =
+    "Saved when Myna Flow quit, before the meeting could be summarized."
+
+  private func waitUntilIdle() async {
+    while phase != .idle, !Task.isCancelled {
+      try? await Task.sleep(for: .milliseconds(100))
+    }
+  }
+
+  /// The task's value, or nil if `limit` passes first. Unlike a task group,
+  /// this returns at the deadline even when the task can't be cancelled.
+  private static func first<T: Sendable>(of task: Task<T, Never>, within limit: Duration) async -> T? {
+    let race = FirstResult<T>()
+    return await withCheckedContinuation { continuation in
+      Task { await race.resolve(continuation, with: await task.value) }
+      Task {
+        try? await Task.sleep(for: limit)
+        await race.resolve(continuation, with: nil)
+      }
+    }
+  }
+
   /// Abandons a recording; every audio chunk is deleted, nothing is saved.
   func cancel() async {
     guard phase != .idle, let session else { return }
+    phase = .idle
     timer?.cancel()
     await session.cancel()
     await teardownCaptures()
@@ -228,5 +291,16 @@ final class MeetingRecorder {
       self.indicator.display = .hidden
       self.panel?.hide()
     }
+  }
+}
+
+/// Resumes a continuation once, with whichever result arrives first.
+private actor FirstResult<T: Sendable> {
+  private var done = false
+
+  func resolve(_ continuation: CheckedContinuation<T?, Never>, with value: T?) {
+    guard !done else { return }
+    done = true
+    continuation.resume(returning: value)
   }
 }

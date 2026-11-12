@@ -291,9 +291,10 @@ final class AppCoordinator {
   func shutdown() async {
     diag("shutdown")
     session?.handle(.cancel)
-    // Quitting mid-meeting deletes its audio; nothing half-recorded is kept.
+    // Quitting mid-meeting saves what was said (transcript only, no
+    // summary) within a few seconds; the audio is deleted either way.
     meetingDetection.stop()
-    await meetings.cancel()
+    await meetings.finishForQuit()
     await languageProvider?.stop()
     await store?.close()
   }
