@@ -116,6 +116,13 @@ struct MeetingDetectorTests {
     #expect(prompts == [.callJoined(zoom, meeting: meeting)])
   }
 
+  @Test("two apps joining together give one prompt, not one after the other")
+  func simultaneousHoldersPromptOnce() {
+    var detector = MeetingDetector()
+    let prompts = run(&detector, stride(from: 0, through: 30, by: 1), mic: [zoom, chrome])
+    #expect(prompts == [.callJoined(zoom, meeting: nil)])
+  }
+
   // MARK: Dedupe between calendar and call
 
   @Test("joining the call while the calendar prompt is open does not prompt again")
@@ -146,6 +153,17 @@ struct MeetingDetectorTests {
     #expect(later == [.callJoined(zoom, meeting: meeting)])
   }
 
+  @Test("a call joined under an open calendar prompt still asks once that prompt expires")
+  func callAsksAfterCalendarPromptExpires() {
+    var detector = MeetingDetector()
+    let meeting = event(startsAt: 60, link: nil)
+    let calendar = detector.evaluate(input(at: 0, events: [meeting]))!
+    #expect(run(&detector, stride(from: 1, through: 20, by: 1), events: [meeting], mic: [zoom]).isEmpty)
+    detector.resolve(calendar, outcome: .expired)
+    let later = run(&detector, stride(from: 21, through: 24, by: 1), events: [meeting], mic: [zoom])
+    #expect(later == [.callJoined(zoom, meeting: meeting)])
+  }
+
   // MARK: While recording
 
   @Test("nothing prompts to start while notes are recording")
@@ -166,13 +184,35 @@ struct MeetingDetectorTests {
     #expect(ended == [.callEnded(zoom)])
   }
 
-  @Test("a call joined after recording started is still watched for its end")
+  @Test("a call joined after recording started is watched once it has run for a minute")
   func callJoinedDuringRecording() {
     var detector = MeetingDetector()
     _ = run(&detector, stride(from: 0, through: 5, by: 1), recording: true)
-    _ = run(&detector, stride(from: 6, through: 20, by: 1), mic: [chrome], recording: true)
-    let ended = run(&detector, stride(from: 21, through: 40, by: 1), recording: true)
+    _ = run(&detector, stride(from: 6, through: 80, by: 1), mic: [chrome], recording: true)
+    let ended = run(&detector, stride(from: 81, through: 100, by: 1), recording: true)
     #expect(ended == [.callEnded(chrome)])
+  }
+
+  @Test("brief mic use mid-recording (web voice typing) never asks to stop")
+  func briefUseDuringRecordingIgnored() {
+    var detector = MeetingDetector()
+    _ = run(&detector, stride(from: 0, through: 5, by: 1), recording: true)
+    _ = run(&detector, stride(from: 6, through: 30, by: 1), mic: [chrome], recording: true)
+    #expect(run(&detector, stride(from: 31, through: 200, by: 1), recording: true).isEmpty)
+  }
+
+  @Test("a call that comes back withdraws the stop prompt and re-arms it for the real end")
+  func resumedCallRearms() {
+    var detector = MeetingDetector()
+    _ = run(&detector, stride(from: 0, through: 20, by: 1), mic: [zoom], recording: true)
+    let first = run(&detector, stride(from: 21, through: 35, by: 1), recording: true)
+    #expect(first == [.callEnded(zoom)])
+    #expect(!detector.recordedCallIsLive)
+    _ = detector.evaluate(input(at: 36, mic: [zoom], recording: true))
+    #expect(detector.recordedCallIsLive)
+    _ = run(&detector, stride(from: 37, through: 60, by: 1), mic: [zoom], recording: true)
+    let second = run(&detector, stride(from: 61, through: 80, by: 1), recording: true)
+    #expect(second == [.callEnded(zoom)])
   }
 
   @Test("recording with no call never prompts that a call ended")

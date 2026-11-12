@@ -15,6 +15,9 @@ public struct MeetingDetector: Sendable {
   public static let lateWindow: TimeInterval = 300
   public static let joinGrace: TimeInterval = 5
   public static let releaseGrace: TimeInterval = 10
+  /// An app that starts using the mic mid-recording joins the recorded call
+  /// only after this long, so web voice typing never arms a stop prompt.
+  public static let midRecordingCallGrace: TimeInterval = 60
 
   private struct Hold {
     var since: Date
@@ -30,6 +33,11 @@ public struct MeetingDetector: Sendable {
   private var recordingCalls: Set<MicHolder>?
   private var endPrompted = false
 
+  /// Whether a call that is part of the current recording still holds the
+  /// mic. The controller withdraws a showing stop prompt when this turns
+  /// back on (the user rejoined after a drop).
+  public private(set) var recordedCallIsLive = false
+
   public init() {}
 
   public mutating func evaluate(_ input: DetectionInput) -> DetectionPrompt? {
@@ -37,6 +45,7 @@ public struct MeetingDetector: Sendable {
     if input.isRecording { return whileRecording(input) }
     recordingCalls = nil
     endPrompted = false
+    recordedCallIsLive = false
     if let prompt = calendarPrompt(input) { return prompt }
     return callPrompt(input)
   }
@@ -67,12 +76,25 @@ public struct MeetingDetector: Sendable {
     // and a meeting that starts mid-recording is part of it.
     for holder in input.micHolders { holds[holder]?.prompted = true }
     for meeting in inWindow(input) { promptedEvents.insert(meeting.id) }
-    let calls = (recordingCalls ?? []).union(input.micHolders)
+    // Calls on the mic when recording began count at once; one that starts
+    // mid-recording counts only once it has run like a call.
+    let joined =
+      recordingCalls == nil
+      ? input.micHolders
+      : input.micHolders.filter { holder in
+        holds[holder].map { input.now.timeIntervalSince($0.since) >= Self.midRecordingCallGrace }
+          ?? false
+      }
+    let calls = (recordingCalls ?? []).union(joined)
     recordingCalls = calls
-    // Ask once, and only when every call app in this recording has let go.
-    guard !endPrompted, calls.allSatisfy({ holds[$0] == nil }),
-      let ended = calls.sorted(by: Self.order).first
-    else { return nil }
+    recordedCallIsLive = calls.contains { holds[$0] != nil }
+    // A call that comes back re-arms the prompt for its real end.
+    if recordedCallIsLive {
+      endPrompted = false
+      return nil
+    }
+    // Ask once, when every call app in this recording has let go.
+    guard !endPrompted, let ended = calls.sorted(by: Self.order).first else { return nil }
     endPrompted = true
     return .callEnded(ended)
   }
@@ -95,12 +117,13 @@ public struct MeetingDetector: Sendable {
       .filter { !$0.value.prompted && input.now.timeIntervalSince($0.value.since) >= Self.joinGrace }
       .map(\.key)
       .sorted(by: Self.order)
-    guard let holder = ready.first else { return nil }
-    holds[holder]?.prompted = true
+    // The open calendar prompt covers this call for now; if it expires
+    // unanswered, the call still gets asked about.
+    guard let holder = ready.first, !openCalendarPrompt else { return nil }
+    // Apps joining together are one call: one prompt, not one per app.
+    for app in ready { holds[app]?.prompted = true }
     let meeting = ongoing(input).first
-    // The open calendar prompt already covers this call, and "Not now" on a
-    // meeting covers its call too.
-    if openCalendarPrompt { return nil }
+    // "Not now" on a meeting covers its call too.
     if let meeting, dismissedEvents.contains(meeting.id) { return nil }
     return .callJoined(holder, meeting: meeting)
   }
