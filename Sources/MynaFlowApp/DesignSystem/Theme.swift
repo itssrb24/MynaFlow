@@ -55,6 +55,9 @@ enum Theme {
     static let bodyStrong = Font.system(size: 13, weight: .semibold)
     static let caption = Font.system(size: 11, weight: .medium)
     static let mono = Font.system(size: 12, weight: .regular, design: .monospaced)
+    /// Long-form reading: meeting summaries and transcripts.
+    static let reading = Font.system(size: 14, weight: .regular)
+    static let readingLineSpacing: CGFloat = 5
     static let keycap = Font.system(size: 12, weight: .semibold, design: .rounded)
   }
 

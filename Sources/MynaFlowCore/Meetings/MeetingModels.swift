@@ -84,7 +84,36 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
   public var transcriptText: String { MeetingTranscript.render(segments) }
 }
 
+/// One speaker's uninterrupted stretch: consecutive chunks of a channel read
+/// as a paragraph instead of a new line every 30 seconds.
+public struct MeetingTurn: Equatable, Sendable {
+  public let channel: MeetingChannel
+  public let startSeconds: Double
+  public let text: String
+
+  public init(channel: MeetingChannel, startSeconds: Double, text: String) {
+    self.channel = channel
+    self.startSeconds = startSeconds
+    self.text = text
+  }
+}
+
 public enum MeetingTranscript {
+  /// Time-ordered turns. Blank chunks are dropped, so silence on one side
+  /// never splits the other side's paragraph.
+  public static func turns(_ segments: [MeetingSegment]) -> [MeetingTurn] {
+    merge(segments).reduce(into: [MeetingTurn]()) { turns, segment in
+      let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !text.isEmpty else { return }
+      if let last = turns.last, last.channel == segment.channel {
+        turns[turns.count - 1] = MeetingTurn(
+          channel: last.channel, startSeconds: last.startSeconds, text: last.text + " " + text)
+      } else {
+        turns.append(MeetingTurn(channel: segment.channel, startSeconds: segment.startSeconds, text: text))
+      }
+    }
+  }
+
   /// Interleaves both channels by audio time. Stable: chunks of one channel
   /// keep their order, and "You" precedes "Others" when they start together.
   public static func merge(_ segments: [MeetingSegment]) -> [MeetingSegment] {

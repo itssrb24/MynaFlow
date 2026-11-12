@@ -13,6 +13,23 @@ public enum MeetingSearch {
     }
   }
 
+  /// Every place `query` appears in `text`, ignoring case and accents, as
+  /// ranges of `text` itself — for highlighting and counting.
+  public static func matches(of query: String, in text: String) -> [Range<String.Index>] {
+    let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !needle.isEmpty else { return [] }
+    var ranges: [Range<String.Index>] = []
+    var searchStart = text.startIndex
+    while let found = text.range(
+      of: needle, options: [.caseInsensitive, .diacriticInsensitive],
+      range: searchStart..<text.endIndex)
+    {
+      ranges.append(found)
+      searchStart = found.upperBound
+    }
+    return ranges
+  }
+
   private static func searchableText(_ meeting: MeetingRecord) -> String {
     var fields = [meeting.eventTitle ?? ""]
     fields += meeting.summary?.keyPoints ?? []

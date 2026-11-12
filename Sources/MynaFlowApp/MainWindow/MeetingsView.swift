@@ -2,24 +2,30 @@ import MynaFlowCore
 import SwiftUI
 
 /// Meeting notes: start and stop, detection settings, and every saved
-/// meeting — searchable, with its summary, action items and transcript.
+/// meeting, searchable. A meeting opens on its own page (MeetingDetailView).
 struct MeetingsView: View {
   let recorder: MeetingRecorder
   let detection: MeetingDetectionController
-  @State private var expanded: UUID?
+  @State private var selected: UUID?
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var confirmDelete: MeetingRecord?
   @State private var searchText = ""
 
   var body: some View {
-    Page(
-      title: "Meetings",
-      subtitle: "Your mic is \"You\", what the Mac plays is \"Others\". Transcribed and summarized on this Mac; audio is deleted as it's transcribed."
-    ) {
-      RecordControl(recorder: recorder)
-      MeetingDetectionCard(detection: detection)
-      if !recorder.meetings.isEmpty { searchField }
-      list
+    Group {
+      if let meeting = recorder.meetings.first(where: { $0.id == selected }) {
+        MeetingDetailView(
+          meeting: meeting, initialQuery: searchText,
+          back: { selected = nil },
+          export: { recorder.export(meeting) },
+          copy: { recorder.copyMarkdown(meeting) },
+          delete: { confirmDelete = meeting })
+        .transition(.opacity.combined(with: .offset(x: 16)))
+      } else {
+        listPage.transition(.opacity)
+      }
     }
+    .animation(reduceMotion ? nil : Theme.Motion.ease, value: selected)
     .task { await recorder.refresh() }
     .confirmationDialog(
       "Delete this meeting's notes?",
@@ -32,6 +38,18 @@ struct MeetingsView: View {
       Button("Cancel", role: .cancel) {}
     } message: {
       Text("The summary and transcript are removed from this Mac. This can't be undone.")
+    }
+  }
+
+  private var listPage: some View {
+    Page(
+      title: "Meetings",
+      subtitle: "Your mic is \"You\", what the Mac plays is \"Others\". Transcribed and summarized on this Mac; audio is deleted as it's transcribed."
+    ) {
+      RecordControl(recorder: recorder)
+      MeetingDetectionCard(detection: detection)
+      if !recorder.meetings.isEmpty { searchField }
+      list
     }
   }
 
@@ -72,14 +90,9 @@ struct MeetingsView: View {
     } else {
       LazyVStack(spacing: Theme.Spacing.md) {
         ForEach(shown) { meeting in
-          MeetingCard(
+          MeetingRow(
             meeting: meeting,
-            isExpanded: expanded == meeting.id,
-            toggle: {
-              withAnimation(Theme.Motion.ease) {
-                expanded = expanded == meeting.id ? nil : meeting.id
-              }
-            },
+            open: { selected = meeting.id },
             export: { recorder.export(meeting) },
             copy: { recorder.copyMarkdown(meeting) },
             delete: { confirmDelete = meeting })
