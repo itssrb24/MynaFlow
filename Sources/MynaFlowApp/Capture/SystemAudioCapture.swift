@@ -36,9 +36,17 @@ final class SystemAudioCapture {
   private var procID: AudioDeviceIOProcID?
   private var continuation: AsyncStream<AudioFrame>.Continuation?
   private var stats: TapStats?
+  private var outputListener: AudioObjectPropertyListenerBlock?
+  /// Called (on the main actor) when the default output device changes —
+  /// AirPods connecting, say. The tap's aggregate is built on the old device,
+  /// so the owner restarts capture to keep hearing the call.
+  var onOutputDeviceChange: @MainActor () -> Void = {}
   private let queue = DispatchQueue(label: "com.itssrb24.MynaFlow.system-audio", qos: .userInitiated)
 
   var isRunning: Bool { procID != nil }
+
+  /// Tap callbacks so far and the loudest sample; nil when not running.
+  var health: (callbacks: Int, peak: Float)? { stats?.health }
 
   func start() throws -> AsyncStream<AudioFrame> {
     stop()
@@ -90,11 +98,13 @@ final class SystemAudioCapture {
     try check(
       "create IO proc", AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, queue, ioBlock))
     try check("start device", AudioDeviceStart(aggregateID, procID))
+    listenForOutputChanges()
     Self.log.info("system audio tap started at \(format.sampleRate) Hz")
     return stream
   }
 
   func stop() {
+    stopListeningForOutputChanges()
     if let stats {
       Self.log.info("system audio tap stopped: \(stats.summary, privacy: .public)")
     }
@@ -114,6 +124,35 @@ final class SystemAudioCapture {
     }
     continuation?.finish()
     continuation = nil
+  }
+
+  // MARK: - Output device changes
+
+  private static var defaultOutputAddress: AudioObjectPropertyAddress {
+    AudioObjectPropertyAddress(
+      mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
+      mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+  }
+
+  private func listenForOutputChanges() {
+    guard outputListener == nil else { return }
+    // Deferred to a fresh main-actor turn: the owner restarts capture, which
+    // removes this listener, and that must not happen inside its own call.
+    let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+      Task { @MainActor in self?.onOutputDeviceChange() }
+    }
+    var address = Self.defaultOutputAddress
+    let status = AudioObjectAddPropertyListenerBlock(
+      AudioObjectID(kAudioObjectSystemObject), &address, .main, listener)
+    if status == noErr { outputListener = listener }
+  }
+
+  private func stopListeningForOutputChanges() {
+    guard let listener = outputListener else { return }
+    var address = Self.defaultOutputAddress
+    AudioObjectRemovePropertyListenerBlock(
+      AudioObjectID(kAudioObjectSystemObject), &address, .main, listener)
+    outputListener = nil
   }
 
   // MARK: - Helpers

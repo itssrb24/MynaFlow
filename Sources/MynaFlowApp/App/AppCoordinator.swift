@@ -225,7 +225,9 @@ final class AppCoordinator {
       installHotkeys()
       installSleepWakeHandling()
       await buildLanguageProvider(paths: paths, store: store)
-      await configureMeetings(store: store, scratch: paths.scratch)
+      await configureMeetings(
+        store: store, scratch: paths.scratch,
+        recovery: paths.root.appendingPathComponent("Recovered Meetings", isDirectory: true))
       await meetingDetection.configure(store: store, recorder: meetings)
 
       // Pre-warm off the critical path so cold launch → ready stays fast.
@@ -364,10 +366,10 @@ final class AppCoordinator {
   /// Meetings always prefer Parakeet when installed and fall back to Apple
   /// Speech per chunk, independent of the dictation engine choice. The model
   /// is read at each start, so installing one later takes effect next time.
-  private func configureMeetings(store: FlowStore, scratch: URL) async {
+  private func configureMeetings(store: FlowStore, scratch: URL, recovery: URL) async {
     meetings.setInputDevice(selectedInputUID)
     await meetings.configure(
-      store: store, scratch: scratch,
+      store: store, scratch: scratch, recoveryDirectory: recovery,
       transcriber: { [weak self] in
         guard let apple = self?.appleEngine else { return nil }
         guard let parakeet = self?.parakeetEngine else { return apple }
@@ -1436,9 +1438,9 @@ final class AppCoordinator {
   private func installHotkeys() {
     let monitor = GlobalHotkeyMonitor(
       configuration: hotkeyConfiguration,
-      onHoldDown: { [weak self] in self?.session?.handle(.holdDown) },
+      onHoldDown: { [weak self] in self?.dictate(.holdDown) },
       onHoldUp: { [weak self] in self?.session?.handle(.holdUp) },
-      onToggle: { [weak self] in self?.session?.handle(.togglePressed) },
+      onToggle: { [weak self] in self?.dictate(.togglePressed) },
       onCancel: { [weak self] in self?.session?.handle(.cancel) },
       onChordAbort: { [weak self] in self?.session?.handle(.cancel) },
       onStyle: { [weak self] action in
@@ -1544,7 +1546,20 @@ final class AppCoordinator {
 
   /// Menu bar "Start Dictation": toggle semantics, so it can always be stopped.
   func toggleDictationFromMenu() {
-    session?.handle(.menuStart)
+    dictate(.menuStart)
+  }
+
+  /// Starts (or toggles) a dictation — unless meeting notes are recording:
+  /// a second capture on the same mic would knock the meeting's mic off and
+  /// duck the call, so the hotkey only says why it did nothing.
+  private func dictate(_ input: DictationSessionPolicy.Input) {
+    guard meetings.phase == .idle else {
+      indicator.display = .error("Meeting notes are recording — dictation is paused")
+      indicatorPanel?.show()
+      scheduleIndicatorHide(after: .seconds(2.5))
+      return
+    }
+    session?.handle(input)
   }
 
   func cancelDictation() {

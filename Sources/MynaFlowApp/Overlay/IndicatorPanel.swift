@@ -39,6 +39,8 @@ final class IndicatorModel {
   /// Orb-time, which advances only while there is sound.
   private(set) var orbPhase: Double = 0
   var elapsedSeconds: Int = 0
+  /// Replaces "Listening — toggle" while recording, e.g. "Meeting notes".
+  var recordingLabel: String?
   /// Clicking the pill during a toggle session stops it.
   var onStopRequested: () -> Void = {}
   /// Clicking an error pill that offers a fix (e.g. open System Settings).
@@ -385,7 +387,7 @@ struct IndicatorView: View {
         ReactiveOrb(
           state: .composing, displaySize: 62, level: model.orbLevel, phase: model.orbPhase)
         VStack(alignment: .leading, spacing: 2) {
-          Text(mode == .hold ? "Listening" : "Listening — toggle")
+          Text(model.recordingLabel ?? (mode == .hold ? "Listening" : "Listening — toggle"))
             .font(.system(size: 13, weight: .semibold))
           Text(elapsedLabel)
             .font(.system(size: 11, design: .monospaced))
@@ -394,7 +396,7 @@ struct IndicatorView: View {
         if mode == .toggle {
           Image(systemName: "stop.circle.fill")
             .font(.system(size: 18))
-            .foregroundStyle(.orange)
+            .foregroundStyle(Theme.Colors.recordingToggle)
             .padding(.leading, 2)
         }
       }

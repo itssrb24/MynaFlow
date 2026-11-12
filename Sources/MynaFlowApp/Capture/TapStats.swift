@@ -25,7 +25,7 @@ final class TapStats: Sendable {
     let layout = layout()
     let shape = layout.map { "\($0.0)ch/\($0.1)B" }.joined(separator: ",")
     counts.withLock { $0.firstLayout = shape }
-    Self.log.info("first tap callback: \(layout.count) buffer(s) [\(shape, privacy: .public)]")
+    Self.log.debug("first tap callback: \(layout.count) buffer(s) [\(shape, privacy: .public)]")
   }
 
   func noteRejected() {
@@ -38,6 +38,12 @@ final class TapStats: Sendable {
       $0.samples += frame.samples.count
       $0.peak = max($0.peak, peak)
     }
+  }
+
+  /// Callbacks so far and the loudest sample — enough to tell "nothing is
+  /// arriving" and "only silence is arriving" apart from a working tap.
+  var health: (callbacks: Int, peak: Float) {
+    counts.withLock { ($0.callbacks, $0.peak) }
   }
 
   var summary: String {

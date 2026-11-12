@@ -17,7 +17,7 @@ struct MeetingsView: View {
       recordControl
       MeetingDetectionCard(detection: detection)
       if let notice = recorder.notice {
-        Label(notice, systemImage: "info.circle")
+        Label(notice.text, systemImage: "info.circle")
           .font(Theme.Fonts.body)
           .foregroundStyle(Theme.Colors.warning)
       }

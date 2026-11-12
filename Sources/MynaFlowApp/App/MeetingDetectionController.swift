@@ -96,7 +96,8 @@ final class MeetingDetectionController {
     guard loop == nil else { return }
     loop = Task { [weak self] in
       while !Task.isCancelled {
-        self?.evaluate()
+        guard let self else { return }
+        self.evaluate()
         try? await Task.sleep(for: Self.tick)
       }
     }
