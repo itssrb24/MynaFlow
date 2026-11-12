@@ -17,6 +17,24 @@ public struct CalendarMeeting: Sendable, Equatable, Identifiable {
     self.end = end
     self.link = link
   }
+
+  /// The meeting happening at `date` (or starting within `leadTime`), so
+  /// notes started by hand still carry the meeting's name. Overlapping
+  /// events prefer one with a video link, then the earliest start.
+  public static func current(
+    in events: [CalendarMeeting], at date: Date, leadTime: TimeInterval = 60
+  ) -> CalendarMeeting? {
+    events
+      .filter { date >= $0.start.addingTimeInterval(-leadTime) && date < $0.end }
+      .sorted(by: linkedFirst)
+      .first
+  }
+
+  /// Events with a video link first, then the earliest start.
+  static func linkedFirst(_ lhs: CalendarMeeting, _ rhs: CalendarMeeting) -> Bool {
+    if (lhs.link != nil) != (rhs.link != nil) { return lhs.link != nil }
+    return lhs.start < rhs.start
+  }
 }
 
 /// An app using the microphone that could mean a call: a meeting app or a

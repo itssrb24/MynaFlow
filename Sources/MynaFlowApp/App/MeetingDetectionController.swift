@@ -37,6 +37,10 @@ final class MeetingDetectionController {
   func configure(store: FlowStore, recorder: MeetingRecorder) async {
     self.store = store
     self.recorder = recorder
+    recorder.currentCalendarTitle = { [weak self] in
+      guard let self, self.calendarEnabled else { return nil }
+      return CalendarMeeting.current(in: self.calendar.meetings, at: Date())?.title
+    }
     callsEnabled = (try? await store.setting(forKey: Self.callsKey)) != "0"
     calendar.selection = CalendarSelection(
       encoded: try? await store.setting(forKey: Self.excludedCalendarsKey))

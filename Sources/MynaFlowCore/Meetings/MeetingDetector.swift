@@ -157,10 +157,8 @@ public struct MeetingDetector: Sendable {
       .sorted(by: Self.linkedFirst)
   }
 
-  /// Events with a video link first, then the earliest start.
   private static func linkedFirst(_ lhs: CalendarMeeting, _ rhs: CalendarMeeting) -> Bool {
-    if (lhs.link != nil) != (rhs.link != nil) { return lhs.link != nil }
-    return lhs.start < rhs.start
+    CalendarMeeting.linkedFirst(lhs, rhs)
   }
 
   /// Meeting apps before browsers, then by name, so ties pick the same app.

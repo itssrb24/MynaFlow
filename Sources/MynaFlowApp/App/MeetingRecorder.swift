@@ -67,6 +67,9 @@ final class MeetingRecorder {
   @ObservationIgnored private var recoveryDirectory: URL?
   @ObservationIgnored private var makeTranscriber: () -> (any TranscriptionProviding)? = { nil }
   @ObservationIgnored private var currentModel: () -> (any LocalLanguageModel)? = { nil }
+  /// The calendar meeting happening now, for notes started by hand. Set by
+  /// the detection controller; nil while calendar prompts are off.
+  @ObservationIgnored var currentCalendarTitle: () -> String? = { nil }
 
   func configure(
     store: FlowStore,
@@ -123,7 +126,7 @@ final class MeetingRecorder {
     // `.starting` can find and cancel it.
     self.session = session
     do {
-      try await session.start(title: title)
+      try await session.start(title: title ?? currentCalendarTitle())
       guard phase == .starting else {
         // Cancelled while the session was opening; close what it opened.
         await session.cancel()
