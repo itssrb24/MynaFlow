@@ -104,10 +104,13 @@ final class MeetingDetectionController {
 
   private func evaluate() {
     let phase = recorder?.phase ?? .idle
+    let activity =
+      callsEnabled ? MicActivityMonitor.current() : MicActivityMonitor.Activity(mic: [], playing: [])
     let input = DetectionInput(
       now: Date(),
       events: calendarEnabled ? calendar.meetings : [],
-      micHolders: callsEnabled ? MicActivityMonitor.currentHolders() : [],
+      micHolders: activity.mic,
+      callAudioHolders: activity.playing,
       isRecording: phase != .idle)
     // A start prompt is moot once notes are running (started from the menu),
     // and a stop prompt is moot once they've stopped.

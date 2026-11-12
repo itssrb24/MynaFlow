@@ -18,19 +18,22 @@ private func event(
 
 private func input(
   at seconds: TimeInterval, events: [CalendarMeeting] = [], mic: Set<MicHolder> = [],
-  recording: Bool = false
+  playing: Set<MicHolder> = [], recording: Bool = false
 ) -> DetectionInput {
   DetectionInput(
-    now: t0.addingTimeInterval(seconds), events: events, micHolders: mic, isRecording: recording)
+    now: t0.addingTimeInterval(seconds), events: events, micHolders: mic,
+    callAudioHolders: playing, isRecording: recording)
 }
 
 /// Feeds a tick every `step` seconds over `range`, returning every prompt.
 private func run(
   _ detector: inout MeetingDetector, _ range: StrideThrough<TimeInterval>,
-  events: [CalendarMeeting] = [], mic: Set<MicHolder> = [], recording: Bool = false
+  events: [CalendarMeeting] = [], mic: Set<MicHolder> = [], playing: Set<MicHolder> = [],
+  recording: Bool = false
 ) -> [DetectionPrompt] {
   range.compactMap {
-    detector.evaluate(input(at: $0, events: events, mic: mic, recording: recording))
+    detector.evaluate(
+      input(at: $0, events: events, mic: mic, playing: playing, recording: recording))
   }
 }
 
@@ -184,6 +187,17 @@ struct MeetingDetectorTests {
     #expect(ended == [.callEnded(zoom)])
   }
 
+  @Test("a muted call (mic released, still playing the others) is not an ended call")
+  func mutedCallIsLive() {
+    var detector = MeetingDetector()
+    _ = run(&detector, stride(from: 0, through: 20, by: 1), mic: [zoom], playing: [zoom], recording: true)
+    let muted = run(&detector, stride(from: 21, through: 150, by: 1), playing: [zoom], recording: true)
+    #expect(muted.isEmpty)
+    #expect(detector.recordedCallIsLive)
+    let hungUp = run(&detector, stride(from: 151, through: 170, by: 1), recording: true)
+    #expect(hungUp == [.callEnded(zoom)])
+  }
+
   @Test("a call joined after recording started is watched once it has run for a minute")
   func callJoinedDuringRecording() {
     var detector = MeetingDetector()
@@ -226,5 +240,16 @@ struct MeetingDetectorTests {
     var detector = MeetingDetector()
     _ = run(&detector, stride(from: 0, through: 20, by: 1), mic: [zoom], recording: true)
     #expect(run(&detector, stride(from: 21, through: 60, by: 1), mic: [zoom]).isEmpty)
+  }
+
+  @Test("meetings from more than a day ago are forgotten")
+  func forgetsOldEvents() {
+    var detector = MeetingDetector()
+    let meeting = event()
+    let prompt = detector.evaluate(input(at: -60, events: [meeting]))!
+    detector.resolve(prompt, outcome: .dismissed)
+    #expect(detector.trackedEventCount == 2)
+    _ = detector.evaluate(input(at: 25 * 60 * 60))
+    #expect(detector.trackedEventCount == 0)
   }
 }

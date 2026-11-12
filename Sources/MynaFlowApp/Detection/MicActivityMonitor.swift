@@ -2,25 +2,37 @@ import CoreAudio
 import Foundation
 import MynaFlowCore
 
-/// Which meeting apps and browsers are using the microphone right now, from
-/// Core Audio's per-process objects (macOS 14.2+). Reads three flags per
-/// process — never any audio — and needs no permission.
+/// Which meeting apps and browsers are using the microphone, or playing
+/// audio, right now — from Core Audio's per-process objects (macOS 14.2+).
+/// Reads flags only, never any audio, and needs no permission.
 enum MicActivityMonitor {
-  static func currentHolders() -> Set<MicHolder> {
-    MeetingApps.micHolders(in: processes(), excludingPID: getpid())
+  struct Activity {
+    /// Apps using the mic: joining a call.
+    let mic: Set<MicHolder>
+    /// Apps playing audio: still on a call while the user is muted.
+    let playing: Set<MicHolder>
   }
 
-  /// Only processes using input are looked at further: one cheap flag per
-  /// process every tick, and the PID and bundle ID only for the few on the mic.
+  static func current() -> Activity {
+    let snapshot = processes()
+    let me = getpid()
+    return Activity(
+      mic: MeetingApps.micHolders(in: snapshot, excludingPID: me),
+      playing: MeetingApps.audioHolders(in: snapshot, excludingPID: me))
+  }
+
+  /// Two cheap flags per process every tick; the PID and bundle ID only for
+  /// the few that are using the mic or playing audio.
   static func processes() -> [AudioProcessSnapshot] {
-    processObjectIDs()
-      .filter { read($0, kAudioProcessPropertyIsRunningInput, as: UInt32(0)) != 0 }
-      .map { process in
-        AudioProcessSnapshot(
-          pid: read(process, kAudioProcessPropertyPID, as: pid_t(-1)),
-          bundleID: bundleID(of: process),
-          isRunningInput: true)
-      }
+    processObjectIDs().compactMap { process in
+      let input = read(process, kAudioProcessPropertyIsRunningInput, as: UInt32(0)) != 0
+      let output = read(process, kAudioProcessPropertyIsRunningOutput, as: UInt32(0)) != 0
+      guard input || output else { return nil }
+      return AudioProcessSnapshot(
+        pid: read(process, kAudioProcessPropertyPID, as: pid_t(-1)),
+        bundleID: bundleID(of: process),
+        isRunningInput: input, isRunningOutput: output)
+    }
   }
 
   // MARK: - Core Audio

@@ -44,12 +44,19 @@ public struct DetectionInput: Sendable {
   public let now: Date
   public let events: [CalendarMeeting]
   public let micHolders: Set<MicHolder>
+  /// Call apps playing audio. A call app that releases the mic while the
+  /// user is muted keeps playing the others, so it is still on the call.
+  public let callAudioHolders: Set<MicHolder>
   public let isRecording: Bool
 
-  public init(now: Date, events: [CalendarMeeting], micHolders: Set<MicHolder>, isRecording: Bool) {
+  public init(
+    now: Date, events: [CalendarMeeting], micHolders: Set<MicHolder>,
+    callAudioHolders: Set<MicHolder> = [], isRecording: Bool
+  ) {
     self.now = now
     self.events = events
     self.micHolders = micHolders
+    self.callAudioHolders = callAudioHolders
     self.isRecording = isRecording
   }
 }

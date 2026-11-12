@@ -5,11 +5,13 @@ public struct AudioProcessSnapshot: Sendable {
   public let pid: Int32
   public let bundleID: String?
   public let isRunningInput: Bool
+  public let isRunningOutput: Bool
 
-  public init(pid: Int32, bundleID: String?, isRunningInput: Bool) {
+  public init(pid: Int32, bundleID: String?, isRunningInput: Bool, isRunningOutput: Bool = false) {
     self.pid = pid
     self.bundleID = bundleID
     self.isRunningInput = isRunningInput
+    self.isRunningOutput = isRunningOutput
   }
 }
 
@@ -45,6 +47,16 @@ public enum MeetingApps {
     Set(
       processes
         .filter { $0.isRunningInput && $0.pid != excludingPID }
+        .compactMap { $0.bundleID.flatMap(holder(forBundleID:)) })
+  }
+
+  /// The catalog apps currently playing audio, excluding `excludingPID`.
+  public static func audioHolders(
+    in processes: [AudioProcessSnapshot], excludingPID: Int32
+  ) -> Set<MicHolder> {
+    Set(
+      processes
+        .filter { $0.isRunningOutput && $0.pid != excludingPID }
         .compactMap { $0.bundleID.flatMap(holder(forBundleID:)) })
   }
 

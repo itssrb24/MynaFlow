@@ -63,4 +63,15 @@ struct ConferenceLinkTests {
     let holders = MeetingApps.micHolders(in: processes, excludingPID: 99)
     #expect(holders.map(\.name) == ["Zoom"])
   }
+
+  @Test("apps still playing audio are found the same way, never our own process")
+  func audioHoldersFromProcesses() {
+    let processes = [
+      AudioProcessSnapshot(pid: 10, bundleID: "us.zoom.xos", isRunningInput: false, isRunningOutput: true),
+      AudioProcessSnapshot(pid: 11, bundleID: "com.apple.Music", isRunningInput: false, isRunningOutput: true),
+      AudioProcessSnapshot(pid: 99, bundleID: "com.apple.FaceTime", isRunningInput: false, isRunningOutput: true),
+    ]
+    #expect(MeetingApps.audioHolders(in: processes, excludingPID: 99).map(\.name) == ["Zoom"])
+    #expect(MeetingApps.micHolders(in: processes, excludingPID: 99).isEmpty)
+  }
 }

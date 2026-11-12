@@ -26,8 +26,13 @@ public struct MeetingDetector: Sendable {
   }
 
   private var holds: [MicHolder: Hold] = [:]
-  private var promptedEvents: Set<String> = []
-  private var dismissedEvents: Set<String> = []
+  /// Event id → start, so entries can be forgotten a day after the event.
+  private var promptedEvents: [String: Date] = [:]
+  private var dismissedEvents: [String: Date] = [:]
+  private static let memory: TimeInterval = 24 * 60 * 60
+
+  /// Remembered event ids — for tests that check old ones are dropped.
+  var trackedEventCount: Int { promptedEvents.count + dismissedEvents.count }
   private var openCalendarPrompt = false
   /// Call apps seen during the current recording; nil when not recording.
   private var recordingCalls: Set<MicHolder>?
@@ -42,6 +47,7 @@ public struct MeetingDetector: Sendable {
 
   public mutating func evaluate(_ input: DetectionInput) -> DetectionPrompt? {
     updateHolds(input)
+    forgetOldEvents(input.now)
     if input.isRecording { return whileRecording(input) }
     recordingCalls = nil
     endPrompted = false
@@ -54,9 +60,9 @@ public struct MeetingDetector: Sendable {
     switch prompt {
     case .calendarStart(let meeting):
       openCalendarPrompt = false
-      if outcome == .dismissed { dismissedEvents.insert(meeting.id) }
+      if outcome == .dismissed { dismissedEvents[meeting.id] = meeting.start }
     case .callJoined(_, let meeting):
-      if outcome == .dismissed, let meeting { dismissedEvents.insert(meeting.id) }
+      if outcome == .dismissed, let meeting { dismissedEvents[meeting.id] = meeting.start }
     case .callEnded:
       break
     }
@@ -71,11 +77,17 @@ public struct MeetingDetector: Sendable {
     holds = holds.filter { input.now.timeIntervalSince($0.value.lastSeen) <= Self.releaseGrace }
   }
 
+  private mutating func forgetOldEvents(_ now: Date) {
+    let cutoff = now.addingTimeInterval(-Self.memory)
+    promptedEvents = promptedEvents.filter { $0.value > cutoff }
+    dismissedEvents = dismissedEvents.filter { $0.value > cutoff }
+  }
+
   private mutating func whileRecording(_ input: DetectionInput) -> DetectionPrompt? {
     // A call already covered by a recording never asks to start afterwards,
     // and a meeting that starts mid-recording is part of it.
     for holder in input.micHolders { holds[holder]?.prompted = true }
-    for meeting in inWindow(input) { promptedEvents.insert(meeting.id) }
+    for meeting in inWindow(input) { promptedEvents[meeting.id] = meeting.start }
     // Calls on the mic when recording began count at once; one that starts
     // mid-recording counts only once it has run like a call.
     let joined =
@@ -87,7 +99,7 @@ public struct MeetingDetector: Sendable {
       }
     let calls = (recordingCalls ?? []).union(joined)
     recordingCalls = calls
-    recordedCallIsLive = calls.contains { holds[$0] != nil }
+    recordedCallIsLive = calls.contains { holds[$0] != nil || input.callAudioHolders.contains($0) }
     // A call that comes back re-arms the prompt for its real end.
     if recordedCallIsLive {
       endPrompted = false
@@ -101,10 +113,10 @@ public struct MeetingDetector: Sendable {
 
   private mutating func calendarPrompt(_ input: DetectionInput) -> DetectionPrompt? {
     let due = inWindow(input)
-      .filter { !promptedEvents.contains($0.id) }
+      .filter { promptedEvents[$0.id] == nil }
       .sorted(by: Self.linkedFirst)
     guard let meeting = due.first else { return nil }
-    promptedEvents.insert(meeting.id)
+    promptedEvents[meeting.id] = meeting.start
     openCalendarPrompt = true
     return .calendarStart(meeting)
   }
@@ -124,7 +136,7 @@ public struct MeetingDetector: Sendable {
     for app in ready { holds[app]?.prompted = true }
     let meeting = ongoing(input).first
     // "Not now" on a meeting covers its call too.
-    if let meeting, dismissedEvents.contains(meeting.id) { return nil }
+    if let meeting, dismissedEvents[meeting.id] != nil { return nil }
     return .callJoined(holder, meeting: meeting)
   }
 
