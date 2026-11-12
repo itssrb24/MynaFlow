@@ -80,7 +80,7 @@ struct MainWindowView: View {
     switch section {
     case .insights: InsightsView(coordinator: coordinator)
     case .history: HistoryView(coordinator: coordinator)
-    case .meetings: MeetingsView(recorder: coordinator.meetings)
+    case .meetings: MeetingsView(recorder: coordinator.meetings, detection: coordinator.meetingDetection)
     case .styles: StylesView(coordinator: coordinator)
     case .vocabulary: VocabularyView(coordinator: coordinator)
     case .learning: LearningView(coordinator: coordinator)

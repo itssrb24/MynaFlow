@@ -297,15 +297,21 @@ is built to fail safe when something goes wrong.
 
 ### Permissions
 
-Myna Flow asks for two permissions and no others.
+Myna Flow needs two permissions. Two more are optional and only asked for
+when you use the feature that needs them.
 
 | Permission | Why | Without it |
 |---|---|---|
 | **Microphone** | To hear you | Nothing works |
 | **Accessibility** | To type into the focused text field, and read your selection when you ask for a polish | Shortcuts and insertion stop working |
+| **System Audio Recording** (optional) | Meeting notes hear the other side of a call | Meeting notes record only your mic |
+| **Calendar** (optional) | Ask "take notes?" when a calendar meeting starts. Read from the Mac's own calendar store; Google or Outlook accounts sync there through macOS, never through Myna Flow | Only calls you join trigger the prompt |
 
-No Screen Recording, no Full Disk Access, no Contacts, no Calendar, and no login
-item unless you switch one on.
+Knowing that you joined a call needs no permission: Myna Flow checks which apps
+are using the microphone (a flag macOS exposes), never what they hear.
+
+No Screen Recording, no Full Disk Access, no Contacts, and no login item unless
+you switch one on.
 
 > **Accessibility is a real power** and worth being plain about: the same
 > permission that lets the app type for you would let it read the focused text

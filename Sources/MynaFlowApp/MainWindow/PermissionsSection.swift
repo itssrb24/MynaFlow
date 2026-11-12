@@ -13,6 +13,9 @@ struct PermissionsSection: View {
       row("Microphone", granted: coordinator.microphoneGranted) { coordinator.openMicrophoneSettings() }
       row("Accessibility", granted: coordinator.accessibilityGranted) { coordinator.openAccessibilitySettings() }
       row("Input Monitoring", granted: coordinator.inputMonitoringGranted) { coordinator.openInputMonitoringSettings() }
+      row("Calendar", granted: coordinator.meetingDetection.calendar.isAuthorized, optional: true) {
+        coordinator.meetingDetection.calendar.openSettings()
+      }
 
       if !coordinator.accessibilityGranted {
         HStack(spacing: Theme.Spacing.sm) {
@@ -67,13 +70,18 @@ struct PermissionsSection: View {
     .task { coordinator.refreshInstalledCopies() }
   }
 
-  private func row(_ name: String, granted: Bool, open: @escaping () -> Void) -> some View {
+  /// `optional` permissions (Calendar) show grey rather than red when off.
+  private func row(
+    _ name: String, granted: Bool, optional: Bool = false, open: @escaping () -> Void
+  ) -> some View {
     HStack(spacing: Theme.Spacing.sm) {
       Image(systemName: "circle.fill")
         .font(.system(size: 8))
-        .foregroundStyle(granted ? Theme.Colors.success : Theme.Colors.danger)
+        .foregroundStyle(
+          granted ? Theme.Colors.success : optional ? Theme.Colors.textTertiary : Theme.Colors.danger)
       Text(name).font(Theme.Fonts.bodyStrong).foregroundStyle(Theme.Colors.textPrimary)
-      Text(granted ? "granted" : "off").font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
+      Text(granted ? "granted" : optional ? "off · optional" : "off")
+        .font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textTertiary)
       Spacer()
       Button("Open settings…", action: open).buttonStyle(NeuButtonStyle())
     }

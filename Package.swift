@@ -55,6 +55,8 @@ let package = Package(
             exclude: ["Resources"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("EventKit"),
                 .linkedFramework("ServiceManagement"),
                 .linkedFramework("SwiftUI"),
             ]

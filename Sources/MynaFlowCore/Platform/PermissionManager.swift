@@ -5,7 +5,9 @@ import Foundation
 import IOKit.hid
 
 /// The permissions Myna Flow needs — microphone, Accessibility, and Input
-/// Monitoring. Deliberately nothing else: no calendar, no screen recording.
+/// Monitoring. Calendar is optional and owned by meeting detection in the
+/// app (`CalendarSource`); System Audio Recording is asked for by meeting
+/// notes on first use. No screen recording.
 @MainActor
 public final class PermissionManager {
   public init() {}

@@ -5,6 +5,7 @@ import SwiftUI
 /// items and labelled transcript, with export and delete.
 struct MeetingsView: View {
   let recorder: MeetingRecorder
+  let detection: MeetingDetectionController
   @State private var expanded: UUID?
   @State private var confirmDelete: MeetingRecord?
 
@@ -14,6 +15,7 @@ struct MeetingsView: View {
       subtitle: "Your mic is \"You\", what the Mac plays is \"Others\". Transcribed and summarized on this Mac; audio is deleted every 30 seconds."
     ) {
       recordControl
+      MeetingDetectionCard(detection: detection)
       if let notice = recorder.notice {
         Label(notice, systemImage: "info.circle")
           .font(Theme.Fonts.body)

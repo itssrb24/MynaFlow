@@ -1,5 +1,18 @@
 import Foundation
 
+/// One Core Audio process object, as read by the app's mic monitor.
+public struct AudioProcessSnapshot: Sendable {
+  public let pid: Int32
+  public let bundleID: String?
+  public let isRunningInput: Bool
+
+  public init(pid: Int32, bundleID: String?, isRunningInput: Bool) {
+    self.pid = pid
+    self.bundleID = bundleID
+    self.isRunningInput = isRunningInput
+  }
+}
+
 /// Apps whose use of the microphone suggests a call.
 public enum MeetingApps {
   public static let meetingApps: [String: String] = [
@@ -23,6 +36,17 @@ public enum MeetingApps {
     "org.mozilla.firefox": "Firefox",
     "org.mozilla.plugincontainer": "Firefox",
   ]
+
+  /// The catalog apps currently using the mic, excluding `excludingPID`
+  /// (Myna Flow itself, whose dictation and meeting capture use the mic too).
+  public static func micHolders(
+    in processes: [AudioProcessSnapshot], excludingPID: Int32
+  ) -> Set<MicHolder> {
+    Set(
+      processes
+        .filter { $0.isRunningInput && $0.pid != excludingPID }
+        .compactMap { $0.bundleID.flatMap(holder(forBundleID:)) })
+  }
 
   /// The catalog entry for a process's bundle ID. Helper processes such as
   /// `com.google.Chrome.helper` resolve to their app; a different app that

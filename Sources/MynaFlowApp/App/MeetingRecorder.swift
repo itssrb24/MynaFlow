@@ -25,6 +25,9 @@ final class MeetingRecorder {
   /// One-line status for the page: an error, or why a summary is missing.
   private(set) var notice: String?
   var isRecording: Bool { phase == .recording }
+  /// Bumped at each recording start, so an answer meant for one recording
+  /// (a "call ended" countdown) can never stop the next one.
+  private(set) var recordingCount = 0
 
   @ObservationIgnored let indicator = IndicatorModel()
   @ObservationIgnored private var panel: IndicatorPanelController?
@@ -66,7 +69,8 @@ final class MeetingRecorder {
     }
   }
 
-  func start() async {
+  /// `title` names the calendar meeting the notes are for, when known.
+  func start(title: String? = nil) async {
     guard phase == .idle, let store, let scratch, let transcriber = makeTranscriber() else {
       if store == nil { notice = "Meeting notes are unavailable until Myna Flow finishes starting." }
       return
@@ -79,7 +83,7 @@ final class MeetingRecorder {
       store: store,
       scratchDirectory: scratch)
     do {
-      try await session.start()
+      try await session.start(title: title)
       self.session = session
       let others = try system.start()
       mic.duckOtherAudio = false
@@ -99,6 +103,7 @@ final class MeetingRecorder {
       return
     }
     phase = .recording
+    recordingCount += 1
     showIndicator()
   }
 

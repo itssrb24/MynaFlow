@@ -49,4 +49,18 @@ struct ConferenceLinkTests {
     #expect(MeetingApps.holder(forBundleID: "com.apple.Music") == nil)
     #expect(MeetingApps.holder(forBundleID: "com.google.ChromeRemoteDesktop") == nil)
   }
+
+  @Test("mic holders are the catalog apps using input, never our own process")
+  func micHoldersFromProcesses() {
+    let processes = [
+      AudioProcessSnapshot(pid: 10, bundleID: "us.zoom.xos", isRunningInput: true),
+      AudioProcessSnapshot(pid: 11, bundleID: "com.google.Chrome.helper", isRunningInput: false),
+      AudioProcessSnapshot(pid: 12, bundleID: "com.apple.Music", isRunningInput: true),
+      AudioProcessSnapshot(pid: 13, bundleID: nil, isRunningInput: true),
+      // Myna Flow's own dictation or meeting capture never counts.
+      AudioProcessSnapshot(pid: 99, bundleID: "com.apple.FaceTime", isRunningInput: true),
+    ]
+    let holders = MeetingApps.micHolders(in: processes, excludingPID: 99)
+    #expect(holders.map(\.name) == ["Zoom"])
+  }
 }

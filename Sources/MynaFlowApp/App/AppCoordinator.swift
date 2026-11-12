@@ -13,6 +13,7 @@ final class AppCoordinator {
   let indicator = IndicatorModel()
   /// Meeting notes: explicit start/stop, its own indicator and capture.
   let meetings = MeetingRecorder()
+  let meetingDetection = MeetingDetectionController()
   private(set) var recentDictations: [DictationRecord] = []
   private(set) var menuBarState: MenuBarState = .idle
 
@@ -225,6 +226,7 @@ final class AppCoordinator {
       installSleepWakeHandling()
       await buildLanguageProvider(paths: paths, store: store)
       await configureMeetings(store: store, scratch: paths.scratch)
+      await meetingDetection.configure(store: store, recorder: meetings)
 
       // Pre-warm off the critical path so cold launch → ready stays fast.
       Task.detached(priority: .utility) {
@@ -290,6 +292,7 @@ final class AppCoordinator {
     diag("shutdown")
     session?.handle(.cancel)
     // Quitting mid-meeting deletes its audio; nothing half-recorded is kept.
+    meetingDetection.stop()
     await meetings.cancel()
     await languageProvider?.stop()
     await store?.close()

@@ -32,6 +32,8 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Shahrukh. MIT licensed.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Myna Flow reads your calendar on this Mac to offer meeting notes when a meeting starts. Nothing leaves your Mac.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Myna Flow records the other side of a call only while you run a meeting recording you started. Audio is transcribed on this Mac, each 30-second piece is deleted as soon as it is transcribed, and nothing is sent anywhere.</string>
 	<key>NSMicrophoneUsageDescription</key>
