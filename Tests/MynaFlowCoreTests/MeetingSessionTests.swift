@@ -47,6 +47,24 @@ private actor ChunkNamingTranscriber: TranscriptionProviding {
   }
 }
 
+/// Holds whoever waits until the test opens it — makes "a result arrives
+/// after the next meeting started" deterministic instead of a timing race.
+private actor Gate {
+  private var isOpen = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    if isOpen { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func open() {
+    isOpen = true
+    waiters.forEach { $0.resume() }
+    waiters = []
+  }
+}
+
 private actor FakeMeetingStore: MeetingStoring {
   private(set) var meetings: [MeetingRecord] = []
   var failInsert = false
@@ -285,6 +303,61 @@ struct MeetingSessionTests {
     #expect(result == .cancelled)
     #expect(audioFiles(in: scratch).isEmpty)
     #expect(await store.meetings.isEmpty)
+  }
+
+  @Test("a discarded meeting's late transcription never lands in the next meeting")
+  func discardedSessionDoesNotLeak() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch)
+    let gate = Gate()
+    await transcriber.setHook { await gate.wait() }
+
+    try await session.start()
+    await session.append(frame(seconds: 1), channel: .you)
+    // Discard only once chunk you-0 is inside the engine, mid-transcription.
+    while await transcriber.seen.isEmpty { await Task.yield() }
+    await session.cancel()
+    try await session.start()
+    await session.append(frame(seconds: 1), channel: .others)
+    await gate.open()  // the discarded chunk's text arrives now
+    let result = await session.stop()
+
+    guard case .saved(let record) = result else {
+      Issue.record("expected saved, got \(result)")
+      return
+    }
+    #expect(record.segments.map(\.text) == ["others#0"])
+    #expect(record.summaryNote == MeetingSummarizer.noModelNote)
+    #expect(audioFiles(in: scratch).isEmpty)
+  }
+
+  @Test("a disk that stops taking audio is reported at once and noted at stop")
+  func writeFailureReportedImmediately() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch)
+
+    try await session.start()
+    #expect(await session.append(frame(seconds: 0.5), channel: .you))
+    // The open chunk keeps writing, but the next one cannot be created.
+    try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: scratch.path)
+    defer {
+      try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scratch.path)
+    }
+    #expect(await session.append(frame(seconds: 0.5), channel: .you) == false)
+    #expect(await session.writeFailure != nil)
+    #expect(await session.append(frame(seconds: 0.5), channel: .others) == false)
+
+    let result = await session.stop()
+    guard case .saved(let record) = result else {
+      Issue.record("expected saved, got \(result)")
+      return
+    }
+    #expect(record.segments.map(\.text) == ["you#0"])
+    #expect(record.summaryNote?.contains("Could not write meeting audio") == true)
   }
 
   @Test("a store failure still deletes audio and hands back the transcript")

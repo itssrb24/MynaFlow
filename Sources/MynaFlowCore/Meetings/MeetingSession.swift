@@ -27,6 +27,10 @@ public enum MeetingStopResult: Equatable, Sendable {
 /// Start and stop are explicit — nothing here detects or starts a meeting.
 public actor MeetingSession {
   private struct Chunk: Sendable {
+    /// The meeting this audio belongs to. A discarded meeting's chunk can
+    /// finish transcribing after the next meeting has started; its text
+    /// must never land there.
+    let session: UUID
     let url: URL
     let channel: MeetingChannel
     let startSeconds: Double
@@ -72,7 +76,9 @@ public actor MeetingSession {
   /// begun, or a new start cannot interleave with it across its awaits.
   private var stopping = false
   private var saving = false
-  private var writeFailure: String?
+  /// Why audio stopped being written, once it has. Capture keeps running so
+  /// the caller decides whether to stop; what was transcribed is still saved.
+  public private(set) var writeFailure: String?
   /// Chunks the engines could not read. Their audio is gone, so the saved
   /// note must say the transcript has gaps.
   private var untranscribedChunks = 0
@@ -125,8 +131,13 @@ public actor MeetingSession {
   }
 
   /// Appends captured audio to a channel, rotating its chunk when full.
-  public func append(_ frame: AudioFrame, channel: MeetingChannel) {
-    guard isRecording, writeFailure == nil, var track = tracks[channel] else { return }
+  /// Returns false once audio can no longer be written (see `writeFailure`),
+  /// so the caller can tell the user right away rather than at stop.
+  @discardableResult
+  public func append(_ frame: AudioFrame, channel: MeetingChannel) -> Bool {
+    guard isRecording else { return true }
+    guard writeFailure == nil else { return false }
+    guard var track = tracks[channel] else { return true }
     do {
       try track.writer.append(frame)
       track.peak = max(track.peak, frame.samples.lazy.map(abs).max() ?? 0)
@@ -138,7 +149,9 @@ public actor MeetingSession {
       // A disk that cannot take audio ends capture; what was transcribed so
       // far is still saved at stop.
       writeFailure = "Could not write meeting audio: \(error.localizedDescription)"
+      return false
     }
+    return true
   }
 
   /// Ends capture, transcribes the remaining audio, summarizes, saves.
@@ -187,6 +200,8 @@ public actor MeetingSession {
     cancelled = true
     startedAt = nil
     transcriptionChain?.cancel()
+    // Detach: the next meeting must not wait on, or inherit, this chain.
+    transcriptionChain = nil
     discardAllAudio()
   }
 
@@ -228,7 +243,10 @@ public actor MeetingSession {
       return
     }
     completedChunks[channel, default: 0] += 1
-    enqueue(Chunk(url: track.url, channel: channel, startSeconds: track.completedSeconds))
+    enqueue(
+      Chunk(
+        session: sessionID, url: track.url, channel: channel,
+        startSeconds: track.completedSeconds))
   }
 
   /// Chunks transcribe one at a time, in the order they were cut, so the
@@ -243,7 +261,7 @@ public actor MeetingSession {
 
   private func transcribe(_ chunk: Chunk) async {
     defer { delete(chunk.url) }
-    guard !cancelled, !Task.isCancelled else { return }
+    guard isCurrent(chunk), !Task.isCancelled else { return }
     let outcome: EngineOutcome
     do {
       outcome = try await transcriber.transcribe(audio: chunk.url, hints: [])
@@ -257,16 +275,21 @@ public actor MeetingSession {
       Self.log.error(
         "chunk \(chunk.channel.label, privacy: .public) at \(chunk.startSeconds)s not transcribed: \(String(describing: type(of: error)), privacy: .public)"
       )
-      if !cancelled { untranscribedChunks += 1 }
+      if isCurrent(chunk) { untranscribedChunks += 1 }
       return
     }
     let text = outcome.result.text.trimmingCharacters(in: .whitespacesAndNewlines)
     Self.log.info(
       "chunk \(chunk.channel.label, privacy: .public) at \(chunk.startSeconds)s → \(text.count) chars")
     // Punctuation alone (a lone ".") is engine noise, not speech.
-    guard !cancelled, text.contains(where: { $0.isLetter || $0.isNumber }) else { return }
+    guard isCurrent(chunk), text.contains(where: { $0.isLetter || $0.isNumber }) else { return }
     segments.append(
       MeetingSegment(channel: chunk.channel, startSeconds: chunk.startSeconds, text: text))
+  }
+
+  /// Whether a chunk's result still belongs to a live meeting.
+  private func isCurrent(_ chunk: Chunk) -> Bool {
+    !cancelled && chunk.session == sessionID
   }
 
   private func delete(_ url: URL) {
