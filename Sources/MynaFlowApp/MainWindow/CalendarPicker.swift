@@ -12,9 +12,7 @@ struct CalendarPicker: View {
     DisclosureGroup(isExpanded: $isExpanded) {
       VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
         ForEach(accounts(calendars), id: \.self) { account in
-          Text(account.uppercased())
-            .font(Theme.Fonts.caption)
-            .foregroundStyle(Theme.Colors.textTertiary)
+          SectionLabel(text: account)
             .padding(.top, Theme.Spacing.xs)
           ForEach(calendars.filter { $0.account == account }) { option in
             Toggle(isOn: binding(for: option)) {
@@ -22,6 +20,7 @@ struct CalendarPicker: View {
                 Circle()
                   .fill(option.color.map { Color(cgColor: $0) } ?? Theme.Colors.textTertiary)
                   .frame(width: 8, height: 8)
+                  .accessibilityHidden(true)
                 Text(option.title)
                   .font(Theme.Fonts.body)
                   .foregroundStyle(Theme.Colors.textPrimary)

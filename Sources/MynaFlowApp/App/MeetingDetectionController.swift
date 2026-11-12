@@ -144,6 +144,7 @@ final class MeetingDetectionController {
     let model = panel.model
     model.content = Self.content(for: prompt)
     model.secondsLeft = Self.promptSeconds
+    model.totalSeconds = Self.promptSeconds
     model.onPrimary = { [weak self] in self?.answer(prompt, primary: true) }
     model.onSecondary = { [weak self] in self?.answer(prompt, primary: false) }
     panel.show()
@@ -202,19 +203,23 @@ final class MeetingDetectionController {
     switch prompt {
     case .calendarStart(let meeting):
       MeetingPromptContent(
-        title: "\(meeting.title) is starting",
+        title: meeting.title,
+        subtitle: "Starts at \(meeting.start.formatted(date: .omitted, time: .shortened))"
+          + (meeting.link != nil ? " · video call" : ""),
         detail: "Take meeting notes? Audio stays on this Mac and is deleted as it's transcribed.",
-        primary: "Start notes", secondary: "Not now", tone: .start, timeoutLabel: "Closes in")
+        primary: "Start Notes", secondary: "Not Now", tone: .start, timeoutLabel: "Closes in")
     case .callJoined(let app, let meeting):
       MeetingPromptContent(
-        title: meeting.map { "\($0.title) — \(app.name) is on a call" } ?? "\(app.name) is using the mic",
+        title: meeting?.title ?? "\(app.name) is using the mic",
+        subtitle: "\(app.name) · on a call",
         detail: "Looks like you joined a call. Take meeting notes?",
-        primary: "Start notes", secondary: "Not now", tone: .start, timeoutLabel: "Closes in")
+        primary: "Start Notes", secondary: "Not Now", tone: .start, timeoutLabel: "Closes in")
     case .callEnded(let app):
       MeetingPromptContent(
-        title: "\(app.name) call ended",
+        title: "Call ended",
+        subtitle: "\(app.name) let go of the mic",
         detail: "Stop and summarize the meeting notes?",
-        primary: "Stop & summarize", secondary: "Keep recording", tone: .stop,
+        primary: "Stop & Summarize", secondary: "Keep Recording", tone: .stop,
         timeoutLabel: "Stops in")
     }
   }

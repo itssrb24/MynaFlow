@@ -148,7 +148,7 @@ struct MenuBarMenu: View {
       .disabled(coordinator.recentDictations.isEmpty)
     Button("Undo Last Dictation") { coordinator.undoLastDictation() }
     Button("Open Scratchpad") { coordinator.openScratchpad() }
-    Button(coordinator.meetings.isRecording ? "Stop Meeting Notes" : "Start Meeting Notes") {
+    Button(coordinator.meetings.isRecording ? "Stop & Summarize Meeting" : "Start Meeting Notes") {
       coordinator.meetings.toggle()
     }
     .disabled(coordinator.meetings.phase == .starting || coordinator.meetings.phase == .finishing)
