@@ -174,6 +174,25 @@ data into how much time you saved and how fast you actually speak.
   <img src="docs/images/insights.png" width="420" alt="The Insights page showing words dictated, time saved, speaking pace and a fourteen day chart">
 </p>
 
+### Take notes in meetings
+
+Click **Start Notes** before a call and Myna Flow records two sides of it: your
+microphone as **You**, and whatever the Mac is playing &mdash; the other people
+&mdash; as **Others**. Every 30 seconds the audio is transcribed on this Mac and
+deleted. When you click **Stop & Summarize**, the local language model turns the
+transcript into key points and action items. No model installed? The transcript
+is still saved, with a note saying why there is no summary.
+
+It can also ask for you. Turn on detection and Myna Flow offers to take notes
+when a calendar meeting is about to start, or when Zoom, Teams, FaceTime,
+Webex, Slack, Discord or a browser starts using the mic. It only ever asks:
+recording starts when you click. Calendars are read from the Mac's own calendar
+store, so Google or Outlook accounts you added in System Settings work without
+Myna Flow connecting to anything, and you choose which calendars count.
+
+Meetings are searchable, can be exported as Markdown, and are deleted with one
+click. Quit in the middle of one and the transcript so far is still saved.
+
 ### Two speech engines
 
 | Engine | Size | Good for |
@@ -257,6 +276,11 @@ that cannot leave it.
 - **Your audio** is written to a scratch file while you speak and deleted the
   moment it has been transcribed &mdash; on every path, including failures and
   cancellation. Anything stranded by a crash is swept at the next launch.
+- **Your meetings** follow the same rule: each 30-second chunk of audio is
+  deleted as soon as it is transcribed, and the summary is written by the local
+  model on `127.0.0.1`. Meeting detection reads your calendar from the Mac's
+  own store and checks *which* apps are using the microphone &mdash; never what
+  they hear.
 - **Your text** is stored only in an ordinary SQLite file in
   `~/Library/Application Support/Myna Flow/`. You can open it, export it, or
   delete the folder and leave nothing behind.
@@ -265,8 +289,8 @@ that cannot leave it.
 
 ### Prove it yourself
 
-With the app running, this lists every network connection it has open. It should
-print nothing:
+With the app running &mdash; dictating, polishing or recording meeting notes &mdash;
+this lists every network connection it has open. It should print nothing:
 
 ```bash
 lsof -nP -i -a -p $(pgrep -x MynaFlow)

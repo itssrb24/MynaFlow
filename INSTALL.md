@@ -69,6 +69,24 @@ through:
 If the shortcut does nothing right after you grant Accessibility, quit Myna
 Flow from the menu bar and open it again.
 
+## Meeting notes: two more permissions, only when you use them
+
+Meeting notes ask for two things the first time you use them. Neither is needed
+for dictation.
+
+| Permission | When it's asked | What it covers |
+|---|---|---|
+| **System Audio Recording** | The first time you click **Start Notes** | Hearing the other people on a call (what the Mac plays) |
+| **Calendar** | When you turn on *Ask when a calendar meeting starts* | Reading your meetings from the Mac's calendar store |
+
+If the "Others" side of your notes stays empty, check System Settings ▸ Privacy
+& Security ▸ **Screen & System Audio Recording** ▸ System Audio Recording Only,
+and switch Myna Flow on. macOS sends silence rather than an error when it is
+off, so the Meetings page tells you after a minute of silence.
+
+Knowing that you joined a call needs no permission at all: Myna Flow only checks
+which apps are using the microphone.
+
 ## Using it
 
 - **Hold ⌘⇧Space**, talk, let go. The text appears where your cursor is.

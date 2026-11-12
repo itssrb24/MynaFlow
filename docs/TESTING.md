@@ -186,3 +186,22 @@ harness does) for those, or a VM.
 | *This copy is ad-hoc signed* | The grant dies on the next rebuild | Rebuild with the current `install.sh`, re-grant |
 | *Running from a translocated path* | Opened from Downloads while quarantined | Move to /Applications, reopen |
 | *Accessibility reads as off … quit and reopen* | Per-process cache, or a profile | Relaunch; if it persists, check Device Management |
+
+## Meeting notes checklist
+
+Run on a build from this branch, with the System Audio Recording permission
+granted. None of these need a second Mac.
+
+| Check | How | Expect |
+|---|---|---|
+| Both sides heard | Start Notes, play speech (`say "..."`), talk yourself, Stop & Summarize | "You" and "Others" rows in the transcript, in time order |
+| Audio is deleted | `ls ~/Library/Application\ Support/Myna\ Flow/Scratch` during and after | At most two chunk files while recording; empty after |
+| Still offline | `lsof -nP -i -a -p $(pgrep -x MynaFlow)` while recording | Nothing but the loopback model server, if loaded |
+| Quit mid-meeting | Start Notes, talk, Quit from the menu bar, reopen | Meeting saved, transcript only, noted as cut short |
+| Dictation blocked | Press the dictation shortcut while recording | Indicator says meeting notes are recording; recording continues |
+| Output switch | Connect or disconnect headphones mid-meeting | "Others" keeps being transcribed |
+| Calendar prompt | Turn on calendar detection, add an event 3 min out with a Meet link | Prompt about 60 s before it starts; Start Notes saves the event title |
+| Call prompt | Join any call with nothing recording | One prompt about 5 s in; Not Now keeps it quiet for that call |
+| Call ended | Hang up while recording | "Call ended" about 10 s later; unanswered, notes stop after 60 s |
+| Muted call | Stay muted on a call for 2 min while recording | No "call ended" prompt |
+
