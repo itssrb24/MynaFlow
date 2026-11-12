@@ -218,6 +218,23 @@ struct MeetingSessionTests {
     #expect(audioFiles(in: scratch).isEmpty)
   }
 
+  @Test("a meeting started for a calendar event is saved with its title")
+  func savesEventTitle() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch)
+
+    try await session.start(title: "Weekly sync")
+    await session.append(frame(seconds: 1), channel: .you)
+    let result = await session.stop()
+    guard case .saved(let record) = result else {
+      Issue.record("expected saved, got \(result)")
+      return
+    }
+    #expect(record.eventTitle == "Weekly sync")
+  }
+
   @Test("a second concurrent stop does not save the meeting twice")
   func doubleStopSavesOnce() async throws {
     let scratch = try makeScratch()

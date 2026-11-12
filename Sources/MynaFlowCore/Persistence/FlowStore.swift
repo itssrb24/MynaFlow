@@ -724,6 +724,8 @@ public actor FlowStore {
       """,
       "CREATE INDEX idx_meetings_started_at ON meetings(started_at)",
     ],
+    // v9: the calendar event a meeting was started for, when it was.
+    ["ALTER TABLE meetings ADD COLUMN event_title TEXT"],
   ]
 
   private func migrate() throws {

@@ -16,8 +16,9 @@ extension FlowStore {
     try run(
       """
       INSERT INTO meetings (
-        id, started_at, duration_seconds, segments, key_points, action_items, summary_note
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
+        event_title
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
       """,
       bind: { statement in
         sqlite3_bind_text(statement, 1, record.id.uuidString, -1, transient)
@@ -27,6 +28,7 @@ extension FlowStore {
         bindText(statement, 5, keyPoints)
         bindText(statement, 6, actionItems)
         bindText(statement, 7, record.summaryNote)
+        bindText(statement, 8, record.eventTitle)
       })
   }
 
@@ -34,7 +36,8 @@ extension FlowStore {
   public func meetings(limit: Int) throws -> [MeetingRecord] {
     try query(
       """
-      SELECT id, started_at, duration_seconds, segments, key_points, action_items, summary_note
+      SELECT id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
+        event_title
       FROM meetings ORDER BY started_at DESC LIMIT ?1
       """,
       bind: { sqlite3_bind_int($0, 1, Int32(limit)) },
@@ -68,7 +71,8 @@ extension FlowStore {
       durationSeconds: sqlite3_column_double(statement, 2),
       segments: segments,
       summary: summary,
-      summaryNote: text(statement, 6))
+      summaryNote: text(statement, 6),
+      eventTitle: text(statement, 7))
   }
 }
 

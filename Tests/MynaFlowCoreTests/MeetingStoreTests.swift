@@ -36,6 +36,22 @@ struct MeetingStoreTests {
     await store.close()
   }
 
+  @Test("a meeting keeps the calendar event title it was started for")
+  func eventTitleRoundTrip() async throws {
+    let store = try await FlowStore.open(at: temporaryDatabaseURL())
+    let base = makeMeeting()
+    let meeting = MeetingRecord(
+      id: base.id, startedAt: base.startedAt, durationSeconds: base.durationSeconds,
+      segments: base.segments, summary: base.summary, summaryNote: nil,
+      eventTitle: "Weekly sync")
+    try await store.insertMeeting(meeting)
+    let read = try await store.meetings(limit: 10)
+    #expect(read == [meeting])
+    #expect(read.first?.title.hasPrefix("Weekly sync — ") == true)
+    #expect(makeMeeting().title.hasPrefix("Meeting — "))
+    await store.close()
+  }
+
   @Test("a meeting without a summary keeps its note")
   func noSummary() async throws {
     let store = try await FlowStore.open(at: temporaryDatabaseURL())

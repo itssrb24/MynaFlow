@@ -56,6 +56,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
   public let summary: MeetingSummary?
   /// Why there is no summary (no model, model failed), shown in its place.
   public let summaryNote: String?
+  /// The calendar event the meeting was started for, when it was.
+  public let eventTitle: String?
 
   public init(
     id: UUID = UUID(),
@@ -63,7 +65,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     durationSeconds: Double,
     segments: [MeetingSegment],
     summary: MeetingSummary?,
-    summaryNote: String?
+    summaryNote: String?,
+    eventTitle: String? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -71,10 +74,11 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     self.segments = segments
     self.summary = summary
     self.summaryNote = summaryNote
+    self.eventTitle = eventTitle
   }
 
   public var title: String {
-    "Meeting — " + startedAt.formatted(date: .abbreviated, time: .shortened)
+    (eventTitle ?? "Meeting") + " — " + startedAt.formatted(date: .abbreviated, time: .shortened)
   }
 
   public var transcriptText: String { MeetingTranscript.render(segments) }

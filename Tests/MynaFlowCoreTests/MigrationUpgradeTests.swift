@@ -71,6 +71,28 @@ struct MigrationUpgradeTests {
     await store.close()
   }
 
+  @Test("A v8 database with a meeting upgrades and the meeting has no event title")
+  func upgradesMeetingsFromV8() async throws {
+    let url = try makeLegacyDatabase(version: 8)
+    var handle: OpaquePointer?
+    #expect(sqlite3_open_v2(url.path, &handle, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK)
+    let insert = """
+      INSERT INTO meetings (id, started_at, duration_seconds, segments)
+      VALUES ('\(UUID().uuidString)', 1800000000, 60,
+        '[{"channel":"you","startSeconds":0,"text":"Hi"}]')
+      """
+    #expect(sqlite3_exec(handle, insert, nil, nil, nil) == SQLITE_OK)
+    sqlite3_close_v2(handle)
+
+    let store = try await FlowStore.open(at: url)
+    #expect(await store.schemaVersion() == FlowStore.migrations.count)
+    let meetings = try await store.meetings(limit: 10)
+    #expect(meetings.count == 1)
+    #expect(meetings.first?.eventTitle == nil)
+    #expect(meetings.first?.title.hasPrefix("Meeting — ") == true)
+    await store.close()
+  }
+
   @Test("Opening an already-current database changes nothing")
   func idempotentOnCurrent() async throws {
     let url = try makeLegacyDatabase(version: FlowStore.migrations.count)
