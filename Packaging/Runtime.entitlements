@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Only for llama-server / llama-cli, and only when the signing certificate
+	  has no Team ID (the self-signed "Myna Flow" release certificate).
+
+	  Hardened runtime's library validation accepts a dylib only if it carries
+	  the same Team ID as the process. A self-signed certificate has none, so
+	  dyld refuses the runtime's own bundled libraries and the process aborts
+	  (SIGABRT, exit status 6) before main. The dylibs are sealed inside the
+	  app signature and checked against SHA256SUMS at launch; DYLD_* variables
+	  stay blocked because allow-dyld-environment-variables is not granted.
+	-->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

@@ -56,8 +56,31 @@ rsync -a --exclude SHA256SUMS --exclude README.txt "$RUNTIMES_SRC/" "$RUNTIMES_D
 # has to be hardened in its own right.
 SIGN_FLAGS=(--force --timestamp --options runtime)
 [[ "$SIGN_IDENTITY" == "-" ]] && SIGN_FLAGS=(--force --options runtime)
-for binary in "$RUNTIMES_DST"/*; do
+for binary in "$RUNTIMES_DST"/*.dylib; do
   /usr/bin/codesign "${SIGN_FLAGS[@]}" --sign "$SIGN_IDENTITY" "$binary"
+done
+# Library validation matches Team IDs. A certificate without one (the
+# self-signed release certificate, or ad-hoc) leaves dyld unable to load the
+# dylibs signed just above, and the runtime aborts at launch — see
+# Packaging/Runtime.entitlements. A Team ID certificate keeps validation on.
+TEAM_ID=$(/usr/bin/codesign -dv "$RUNTIMES_DST/libllama.dylib" 2>&1 \
+  | sed -n 's/^TeamIdentifier=//p')
+RUNTIME_ENTITLEMENTS=()
+if [[ -z "$TEAM_ID" || "$TEAM_ID" == "not set" ]]; then
+  RUNTIME_ENTITLEMENTS=(--entitlements Packaging/Runtime.entitlements)
+fi
+for binary in "$RUNTIMES_DST"/llama-server "$RUNTIMES_DST"/llama-cli; do
+  /usr/bin/codesign "${SIGN_FLAGS[@]}" "${RUNTIME_ENTITLEMENTS[@]}" \
+    --sign "$SIGN_IDENTITY" "$binary"
+done
+# Every runtime must start: a dyld refusal here is otherwise only seen as
+# "Summary failed" or a silently skipped cleanup on someone else's Mac.
+for binary in "$RUNTIMES_DST"/llama-server "$RUNTIMES_DST"/llama-cli; do
+  if ! "$binary" --version >/dev/null 2>&1; then
+    echo "error: $(basename "$binary") does not launch after signing:" >&2
+    "$binary" --version 2>&1 | head -3 >&2
+    exit 1
+  fi
 done
 # Seal the manifest the app verifies at launch AFTER signing: signing rewrites
 # the Mach-O files, so the upstream (unsigned) sums in the source tree would
