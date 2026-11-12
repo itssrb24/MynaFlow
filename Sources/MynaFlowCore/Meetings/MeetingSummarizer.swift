@@ -8,9 +8,10 @@ public enum MeetingSummaryOutcome: Equatable, Sendable {
 }
 
 /// Summarizes a meeting with the local Gemma model, map-reduce style: each
-/// transcript part becomes notes, then the notes are merged once. A model
-/// never sees more than one part at a time, so a long meeting fits a small
-/// context window.
+/// transcript part becomes notes, then the notes are merged in rounds of
+/// batches that fit the notes budget until one summary is left. The model
+/// never sees more than one part, or one batch of notes, at a time, so a
+/// long meeting fits a small context window.
 public struct MeetingSummarizer: Sendable {
   public static let noModelNote =
     "No summary: no language model is installed. Install one in Models to summarize meetings."
@@ -18,10 +19,17 @@ public struct MeetingSummarizer: Sendable {
 
   private let model: (any LocalLanguageModel)?
   private let maxPartCharacters: Int
+  private let maxNotesCharacters: Int
 
-  public init(model: (any LocalLanguageModel)?, maxPartCharacters: Int = 6_000) {
+  /// `maxPartCharacters` bounds each transcript part sent to the model;
+  /// `maxNotesCharacters` bounds the notes in each merge prompt.
+  public init(
+    model: (any LocalLanguageModel)?, maxPartCharacters: Int = 6_000,
+    maxNotesCharacters: Int = 6_000
+  ) {
     self.model = model
     self.maxPartCharacters = maxPartCharacters
+    self.maxNotesCharacters = maxNotesCharacters
   }
 
   public func summarize(_ segments: [MeetingSegment]) async -> MeetingSummaryOutcome {
@@ -33,10 +41,7 @@ public struct MeetingSummarizer: Sendable {
       for part in parts {
         notes.append(try await model.generateInstruction(Self.mapPrompt(part), maxTokens: 768))
       }
-      let final =
-        notes.count == 1
-        ? notes[0]
-        : try await model.generateInstruction(Self.reducePrompt(notes), maxTokens: 1_024)
+      let final = try await reduce(notes, with: model)
       guard let summary = Self.parse(final) else {
         return .failed("The model's summary could not be read.")
       }
@@ -45,6 +50,39 @@ public struct MeetingSummarizer: Sendable {
       // Type only: an error may carry model output, which is the user's words.
       return .failed("Summary failed (\(type(of: error))).")
     }
+  }
+
+  /// Merges notes batch by batch until one is left.
+  private func reduce(_ notes: [String], with model: any LocalLanguageModel) async throws -> String {
+    var round = notes
+    while round.count > 1 {
+      var merged: [String] = []
+      for batch in Self.batches(round, maxCharacters: maxNotesCharacters) {
+        merged.append(
+          batch.count == 1
+            ? batch[0]
+            : try await model.generateInstruction(Self.reducePrompt(batch), maxTokens: 1_024))
+      }
+      round = merged
+    }
+    return round[0]
+  }
+
+  /// Groups notes so each merge prompt's notes fit `maxCharacters`. A batch
+  /// always takes at least two notes, so every round shrinks the list and
+  /// the merge ends even when single notes are long.
+  static func batches(_ notes: [String], maxCharacters: Int) -> [[String]] {
+    var batches: [[String]] = []
+    var current: [String] = []
+    for note in notes {
+      if current.count >= 2, renderNotes(current + [note]).count > maxCharacters {
+        batches.append(current)
+        current = []
+      }
+      current.append(note)
+    }
+    if !current.isEmpty { batches.append(current) }
+    return batches
   }
 
   // MARK: - Prompts
@@ -71,10 +109,14 @@ public struct MeetingSummarizer: Sendable {
     """
   }
 
-  static func reducePrompt(_ notes: [String]) -> String {
-    let rendered = notes.enumerated()
+  private static func renderNotes(_ notes: [String]) -> String {
+    notes.enumerated()
       .map { "Notes from part \($0.offset + 1):\n\($0.element)" }
       .joined(separator: "\n\n")
+  }
+
+  static func reducePrompt(_ notes: [String]) -> String {
+    let rendered = renderNotes(notes)
     return """
       These are notes from consecutive parts of one meeting. Merge them into a \
       single summary: combine duplicates, keep every distinct decision and task.

@@ -82,6 +82,48 @@ struct MeetingSummarizerTests {
     #expect(instructions.last?.contains("Notes from part 3") == true)
   }
 
+  @Test("a long meeting merges its notes in rounds that each fit the notes budget")
+  func batchedReduce() async {
+    let model = ScriptedModel { _ in wellFormed }
+    // 140 lines of ~55 chars in 400-char parts → 20 parts of notes, far more
+    // than one 400-char merge prompt can hold.
+    let summarizer = MeetingSummarizer(model: model, maxPartCharacters: 400, maxNotesCharacters: 400)
+    let outcome = await summarizer.summarize(segments(140))
+    guard case .summarized = outcome else {
+      Issue.record("expected summarized, got \(outcome)")
+      return
+    }
+    let merges = await model.instructions.filter { $0.contains("Merge them") }
+    #expect(merges.count > 1)
+    for merge in merges {
+      let notes = merge[merge.range(of: "Notes from part")!.lowerBound...]
+      #expect(notes.count <= 400, "a merge prompt carried \(notes.count) chars of notes")
+    }
+  }
+
+  @Test("a merge that fails is reported as a failed summary")
+  func reduceFailure() async {
+    let model = ScriptedModel { instruction in
+      if instruction.contains("Merge them") { throw LlamaServerError.emptyOutput }
+      return wellFormed
+    }
+    let summarizer = MeetingSummarizer(model: model, maxPartCharacters: 130)
+    let outcome = await summarizer.summarize(segments(6))
+    guard case .failed = outcome else {
+      Issue.record("expected failed, got \(outcome)")
+      return
+    }
+  }
+
+  @Test("a line longer than a part becomes a part of its own, never cut")
+  func oversizedLine() {
+    let long = MeetingSegment(channel: .others, startSeconds: 0, text: String(repeating: "x", count: 300))
+    let short = MeetingSegment(channel: .you, startSeconds: 30, text: "ok")
+    let parts = MeetingSummarizer.split([short, long, short], maxCharacters: 100)
+    #expect(parts.count == 3)
+    #expect(parts[1].contains(String(repeating: "x", count: 300)))
+  }
+
   @Test("a model failure is reported, not thrown")
   func modelFailure() async {
     let model = ScriptedModel { _ in throw LlamaServerError.emptyOutput }
