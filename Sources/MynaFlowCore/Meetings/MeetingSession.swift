@@ -178,6 +178,12 @@ public actor MeetingSession {
     // Echoes go before summarizing, so the call's words aren't read twice
     // or credited to the user.
     let merged = MeetingEcho.removeEchoes(MeetingTranscript.merge(segments), window: chunkSeconds)
+    // Counts only — never the words — so the exportable log stays content-free.
+    DiagnosticsLog.shared.write(
+      "info", "meeting",
+      "stop: segments=\(segments.count) echoesDropped=\(segments.count - merged.count) "
+        + "you=\(merged.filter { $0.channel == .you }.count) "
+        + "others=\(merged.filter { $0.channel == .others }.count)")
     let outcome =
       summarize
       ? await summarizer.summarize(merged)
