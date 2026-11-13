@@ -170,6 +170,10 @@ final class DictationSession {
       let wavURL = scratchDirectory.appendingPathComponent(
         "dictation-\(UUID().uuidString).wav", isDirectory: false)
       let writer = try StreamingWaveWriter(url: wavURL, outputSampleRate: 16_000)
+      // Another app on the mic (a call) would go silent under voice
+      // processing, so dictate without it then.
+      capture.useVoiceProcessing = MicSharing.voiceProcessingIsSafe(
+        MicActivityMonitor.processes(), excludingPID: getpid())
       let frames = try capture.start { [weak self] level in
         // Smoothed for the orb; the controller still gets the raw value.
         self?.indicator.submitAudioLevel(level)

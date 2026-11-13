@@ -99,3 +99,17 @@ public enum ConferenceLink {
     return hosts.contains { host == $0 || host.hasSuffix("." + $0) }
   }
 }
+
+/// Whether Myna Flow may turn on Apple's voice processing for the mic.
+///
+/// Voice processing is system-wide on macOS: while any process has it on,
+/// every other app reading the microphone gets near-silence. So it is only
+/// safe when no other app is using the mic — a call would otherwise stop
+/// hearing the user. Any app counts, not just known call apps.
+public enum MicSharing {
+  public static func voiceProcessingIsSafe(
+    _ processes: [AudioProcessSnapshot], excludingPID: Int32
+  ) -> Bool {
+    !processes.contains { $0.isRunningInput && $0.pid != excludingPID }
+  }
+}
