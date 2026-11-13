@@ -64,11 +64,34 @@ public enum InsertionPlan: Equatable, Sendable {
   case refuseSecureField
 }
 
+/// Whether a focused accessibility element can take typed text.
+///
+/// A paste into Finder's file list "succeeds" — nothing errors — but nothing
+/// lands, and the value check that would notice has no text to compare. So
+/// roles that plainly can't take text are recognised up front. Anything
+/// unfamiliar (web and Electron editors report AXGroup or AXWebArea) is
+/// allowed, so editors that work today keep working.
+public enum TextTarget {
+  static let nonTextRoles: Set<String> = [
+    "AXList", "AXOutline", "AXTable", "AXBrowser", "AXGrid", "AXImage", "AXButton",
+    "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXMenu", "AXMenuBar",
+    "AXMenuItem", "AXMenuBarItem", "AXSlider", "AXScrollBar", "AXToolbar", "AXTabGroup",
+    "AXDisclosureTriangle", "AXRow", "AXColumn", "AXCell", "AXSplitter", "AXProgressIndicator",
+  ]
+
+  /// `hasSelectedTextRange`: the element exposes a text caret, which beats
+  /// whatever its role claims.
+  public static func acceptsText(role: String, hasSelectedTextRange: Bool) -> Bool {
+    hasSelectedTextRange || !nonTextRoles.contains(role)
+  }
+}
+
 public enum InsertionPlanner {
   public static func plan(
     accessibilityGranted: Bool,
     hasFocusedElement: Bool,
     isSecureField: Bool,
+    acceptsText: Bool = true,
     allowBlindPaste: Bool = false
   ) -> InsertionPlan {
     // Posting keystrokes needs the same grant reading the tree does.
@@ -78,6 +101,9 @@ public enum InsertionPlanner {
     }
     // A field we *can* see and that is secure is refused however we got here.
     guard !isSecureField else { return .refuseSecureField }
+    // Focus is on something that can't hold text (a file list, a button):
+    // a paste would vanish, so keep the text and say where it went.
+    guard acceptsText || allowBlindPaste else { return .historyPlusClipboard }
     return .axInsert
   }
 }

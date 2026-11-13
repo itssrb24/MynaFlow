@@ -109,6 +109,9 @@ public final class MacOSTextInserter: TextInsertionService {
       hasFocusedElement: resolvedTarget != nil,
       isSecureField: SecureFieldDetector.isSecure(role: role, subrole: subrole)
         || guessingIntoASecureWindow,
+      acceptsText: resolvedTarget.map {
+        TextTarget.acceptsText(role: role, hasSelectedTextRange: Self.hasTextCaret($0))
+      } ?? true,
       allowBlindPaste: allowBlindPaste)
 
     switch plan {
@@ -142,7 +145,7 @@ public final class MacOSTextInserter: TextInsertionService {
       let clipboardReady = copyToClipboard(text)
       _ = applicationReady
       lastInsertionDiagnostics = diagnostic(
-        route: "clipboard-only", role: "unavailable",
+        route: "clipboard-only", role: role.isEmpty ? "unavailable" : role,
         focus: accessibilityTrusted ? "unresolved" : "not-attempted",
         clipboard: clipboardReady ? "ready" : "failed", value: "unavailable",
         ax: accessibilityTrusted ? "trusted" : "untrusted")
@@ -234,6 +237,14 @@ public final class MacOSTextInserter: TextInsertionService {
       scheduleClipboardCleanup(payload: text, previous: fallbackPreviousClipboard)
     }
     return clipboardReady ? .copiedToClipboard : .noFocusedField
+  }
+
+  /// Whether the element exposes a text selection range — a caret. Text
+  /// controls do whatever their role; file lists and buttons don't.
+  private static func hasTextCaret(_ element: AXUIElement) -> Bool {
+    var value: CFTypeRef?
+    return AXUIElementCopyAttributeValue(
+      element, kAXSelectedTextRangeAttribute as CFString, &value) == .success && value != nil
   }
 
   public func undo() async throws {

@@ -102,3 +102,45 @@ struct InsertionPlannerTests {
         allowBlindPaste: true) == .historyPlusClipboard)
   }
 }
+
+@Suite("Text targets — never report a paste into something that can't take text")
+struct TextTargetTests {
+  @Test("Finder's file views and other non-text controls don't take typed text",
+    arguments: ["AXList", "AXOutline", "AXTable", "AXBrowser", "AXImage", "AXButton", "AXMenuItem"])
+  func nonTextRoles(role: String) {
+    #expect(!TextTarget.acceptsText(role: role, hasSelectedTextRange: false))
+  }
+
+  @Test("text fields, text areas, search and combo boxes take text",
+    arguments: ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"])
+  func textRoles(role: String) {
+    #expect(TextTarget.acceptsText(role: role, hasSelectedTextRange: false))
+  }
+
+  @Test("unfamiliar roles keep pasting, so web and Electron editors still work",
+    arguments: ["AXGroup", "AXWebArea", "", "AXSomethingNew"])
+  func unknownRolesAllowed(role: String) {
+    #expect(TextTarget.acceptsText(role: role, hasSelectedTextRange: false))
+  }
+
+  @Test("an element with a text caret takes text whatever its role says")
+  func caretWins() {
+    #expect(TextTarget.acceptsText(role: "AXList", hasSelectedTextRange: true))
+  }
+
+  @Test("a focused element that can't take text goes to history and the clipboard")
+  func plannerRoutesNonTextToClipboard() {
+    let plan = InsertionPlanner.plan(
+      accessibilityGranted: true, hasFocusedElement: true, isSecureField: false,
+      acceptsText: false)
+    #expect(plan == .historyPlusClipboard)
+  }
+
+  @Test("a password field is still refused, even if it reported no text role")
+  func secureStillRefused() {
+    let plan = InsertionPlanner.plan(
+      accessibilityGranted: true, hasFocusedElement: true, isSecureField: true,
+      acceptsText: false)
+    #expect(plan == .refuseSecureField)
+  }
+}
