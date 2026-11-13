@@ -102,8 +102,8 @@ enum IndicatorPlacement: String, CaseIterable {
 
 @MainActor
 final class IndicatorPanelController {
-  private static let contentSize = NSSize(width: 340, height: 78)
-  private static let shadowMargin: CGFloat = 30
+  private static let contentSize = NSSize(width: 320, height: 44)
+  private static let shadowMargin: CGFloat = 20
   private static let edgeInset: CGFloat = 24
 
   var placement: IndicatorPlacement = .bottomCenter {
@@ -243,11 +243,11 @@ final class IndicatorPanelController {
   }
 }
 
+
 // MARK: - View
 
-/// `NSVisualEffectView` in behind-window mode: the same blur AppKit gives its
-/// own HUDs. Pinned to the dark appearance regardless of the system theme,
-/// because the content drawn on it is always white.
+/// `NSVisualEffectView` in behind-window mode, pinned dark. Under the pill's
+/// near-black fill it only keeps the edges from looking pasted on.
 private struct GlassBackdrop: NSViewRepresentable {
   func makeNSView(context: Context) -> NSVisualEffectView {
     let view = NSVisualEffectView()
@@ -262,6 +262,9 @@ private struct GlassBackdrop: NSViewRepresentable {
   func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
+/// The floating indicator: a slim black capsule that says as little as the
+/// moment needs — the orb and a timer while you talk, one word while it
+/// works, and a card only when a message needs two lines.
 struct IndicatorView: View {
   let model: IndicatorModel
 
@@ -269,17 +272,17 @@ struct IndicatorView: View {
 
   var body: some View {
     content
-      .padding(.horizontal, 16)
-      .padding(.vertical, 8)
-      .frame(minHeight: 62)
-      .background(glass)
-      // The pill is only as wide as what it is saying, and morphs when that
-      // changes — so it carries the same low-bounce spring as the shapes it
-      // borrows from rather than snapping between widths.
+      .padding(.leading, isCard ? 12 : 10)
+      .padding(.trailing, 12)
+      .padding(.vertical, isCard ? 9 : 0)
+      .frame(minHeight: Self.height)
+      .background(surface)
+      .environment(\.colorScheme, .dark)
+      // Only as wide as what it says; morphs rather than snapping.
       .animation(morph, value: model.display)
-      // Appearing should feel like the key press itself, so it pops in on a
-      // short spring rather than fading over 150 ms, which reads as lag.
-      .scaleEffect(isVisible ? 1 : 0.92)
+      // Rises a few points out of the screen edge as it pops in.
+      .scaleEffect(isVisible ? 1 : 0.9)
+      .offset(y: isVisible || reduceMotion ? 0 : 6)
       .opacity(isVisible ? 1 : 0)
       .animation(appear, value: isVisible)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -290,91 +293,43 @@ struct IndicatorView: View {
       }
   }
 
+  static let height: CGFloat = 34
+
   private var isVisible: Bool { model.display != .hidden }
 
-  /// Reduced motion keeps the cross-fade, which aids comprehension, and drops
-  /// the movement.
+  /// Errors and a clipboard notice with a reason can need two lines; a
+  /// capsule can't hold them, so they become a rounded card.
+  private var isCard: Bool {
+    switch model.display {
+    case .error(let message): message.count > 34
+    case .clipboardFallback(let reason): reason != nil
+    default: false
+    }
+  }
+
   private var appear: Animation {
-    reduceMotion
-      ? .easeOut(duration: 0.12) : .spring(response: 0.22, dampingFraction: 0.76)
+    reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.24, dampingFraction: 0.8)
   }
 
   private var morph: Animation {
-    reduceMotion
-      ? .easeOut(duration: 0.12) : .spring(response: 0.34, dampingFraction: 0.9)
+    reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.34, dampingFraction: 0.9)
   }
 
-  /// Apple's glass, not a coloured pane: a frosted sheet that takes its
-  /// colour from whatever is behind it rather than staining it.
-  ///
-  /// The body is a near-neutral graphite — warm enough never to be flat black,
-  /// but carrying no hue of its own — so the wallpaper, the document, the
-  /// window underneath all read through. State lives in a whisper of tint and
-  /// in the coloured glyph beside the text, not in a wash over the pane.
-  ///
-  /// The rim is the signature. A hairline that catches light along the top
-  /// edge and fades around the curve, over a sheen just inside it, is what
-  /// separates a sheet of glass from a rounded rectangle with a blur.
-  private var glass: some View {
-    let shape = RoundedRectangle(cornerRadius: 26, style: .continuous)
-    let accent = stateTint
-    let tint = LinearGradient(
-      colors: [
-        accent.color.opacity(accent.opacity),
-        accent.color.opacity(accent.opacity * 0.40),
-        accent.color.opacity(accent.opacity * 0.65),
-      ],
-      startPoint: .topLeading, endPoint: .bottomTrailing)
-    let rim = LinearGradient(
-      colors: [
-        .white.opacity(Self.rimStrength),
-        .white.opacity(Self.rimStrength * 0.30),
-        .white.opacity(Self.rimStrength * 0.15),
-      ],
-      startPoint: .top, endPoint: .bottom)
-    let sheen = LinearGradient(
-      colors: [.white.opacity(0.22), .white.opacity(0.045), .clear],
-      startPoint: .top, endPoint: .center)
-
-    let blurred = shape.fill(Color.clear)
+  /// Near-black, not glass: a solid fill reads as one crisp object over any
+  /// wallpaper. A hairline rim and a faint top highlight give it an edge.
+  private var surface: some View {
+    let shape = RoundedRectangle(cornerRadius: isCard ? 14 : Self.height / 2, style: .continuous)
+    return shape.fill(Color(white: 0.06).opacity(0.94))
       .background(GlassBackdrop().clipShape(shape))
-    let veiled = blurred.overlay(shape.fill(Self.graphite.opacity(Self.veilStrength)))
-    let tinted = veiled.overlay(shape.fill(tint))
-    let lit = tinted.overlay(shape.fill(sheen))
-    return lit
-      .overlay(shape.strokeBorder(rim, lineWidth: 1))
-      .shadow(color: Self.graphite.opacity(0.40), radius: 20, y: 8)
+      .overlay(
+        shape.strokeBorder(
+          LinearGradient(
+            colors: [.white.opacity(0.16), .white.opacity(0.07)],
+            startPoint: .top, endPoint: .bottom),
+          lineWidth: 0.75)
+      )
+      .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
       .allowsHitTesting(false)
-  }
-
-  /// A warm near-neutral. Never `.black`: a pane held back with pure black
-  /// goes flat and grey, and stops reading as glass at all.
-  private static let graphite = Color(red: 0.115, green: 0.108, blue: 0.098)
-  /// How much the sheet holds back what is behind it. The floor that keeps
-  /// white content legible over a white page.
-  private static let veilStrength: Double = 0.22
-  private static let rimStrength: Double = 0.48
-
-  /// A whisper of the state's colour — enough that the sheet warms while you
-  /// speak, far too little to stain it. The state itself is carried by the
-  /// glyph beside the text.
-  private var stateTint: (color: Color, opacity: Double) {
-    switch model.display {
-    case .recording(.hold):
-      return (Theme.Colors.accent, 0.05 + 0.09 * model.orbLevel)
-    case .recording(.toggle):
-      return (.orange, 0.07 + 0.08 * model.orbLevel)
-    case .processing, .downloading:
-      return (Theme.Colors.accent, 0.05)
-    case .polishing:
-      return (Theme.Colors.accent, 0.07)
-    case .error:
-      return (.red, 0.10)
-    case .success, .clipboardFallback:
-      return (.green, 0.07)
-    case .hidden:
-      return (Theme.Colors.accent, 0)
-    }
   }
 
   @ViewBuilder
@@ -383,84 +338,74 @@ struct IndicatorView: View {
     case .hidden:
       EmptyView()
     case .recording(let mode):
-      HStack(spacing: 10) {
-        ReactiveOrb(
-          state: .composing, displaySize: 62, level: model.orbLevel, phase: model.orbPhase)
-        VStack(alignment: .leading, spacing: 2) {
-          Text(model.recordingLabel ?? (mode == .hold ? "Listening" : "Listening — toggle"))
-            .font(.system(size: 13, weight: .semibold))
-          Text(elapsedLabel)
-            .font(.system(size: 11, design: .monospaced))
-            .foregroundStyle(.secondary)
+      if let label = model.recordingLabel {
+        HStack(spacing: 8) {
+          RecordingDot()
+          Text(label == "Meeting notes" ? "Notes" : label).pillLabel()
+          Text(elapsedLabel).pillTimer()
+          StopButton()
         }
-        if mode == .toggle {
-          Image(systemName: "stop.circle.fill")
-            .font(.system(size: 18))
-            .foregroundStyle(Theme.Colors.recordingToggle)
-            .padding(.leading, 2)
+        .accessibilityElement(children: .combine)
+      } else {
+        HStack(spacing: 8) {
+          ReactiveOrb(
+            state: .composing, size: .px20, displaySize: 26,
+            level: model.orbLevel, phase: model.orbPhase)
+          Text(elapsedLabel).pillTimer()
+          if mode == .toggle { StopButton() }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Listening, \(elapsedLabel)")
       }
-    case .processing(let engine):
-      HStack(spacing: 10) {
-        ReactiveOrb(state: .working, displaySize: 50)
-        VStack(alignment: .leading, spacing: 2) {
-          Text("Transcribing")
-            .font(.system(size: 13, weight: .semibold))
-          Text(engine)
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-        }
+    case .processing:
+      HStack(spacing: 8) {
+        ReactiveOrb(state: .working, size: .px20, displaySize: 26)
+        Text("Transcribing").pillLabel()
+      }
+    case .polishing(let style):
+      HStack(spacing: 8) {
+        ReactiveOrb(state: .solving, size: .px20, displaySize: 26)
+        Text(style.hasPrefix("retrying") ? "Retrying" : "Polishing").pillLabel()
       }
     case .success(let words, let note):
-      HStack(spacing: 8) {
-        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-        VStack(alignment: .leading, spacing: 1) {
-          Text(words == 0 ? "Done" : words == 1 ? "Inserted 1 word" : "Inserted \(words) words")
-            .font(.system(size: 13, weight: .medium))
-          if let note {
-            Text(note).font(.system(size: 10)).foregroundStyle(.secondary)
-          }
-        }
+      HStack(spacing: 7) {
+        Image(systemName: "checkmark")
+          .font(.system(size: 11, weight: .bold))
+          .foregroundStyle(Theme.Colors.success)
+        Text(words == 0 ? "Done" : words == 1 ? "1 word" : "\(words) words").pillLabel()
+        if let note { Text(note).pillTimer().lineLimit(1) }
       }
     case .clipboardFallback(let reason):
-      HStack(spacing: 8) {
-        Image(systemName: "doc.on.clipboard.fill").foregroundStyle(.yellow)
-        Text(
-          reason.map { "Saved to history and copied to clipboard — \($0)" }
-            ?? "Saved to history and copied to clipboard")
-          .font(.system(size: 12, weight: .medium))
-          .frame(maxWidth: 230, alignment: .leading)
-          .fixedSize(horizontal: false, vertical: true)
+      HStack(alignment: reason == nil ? .center : .top, spacing: 8) {
+        Image(systemName: "doc.on.clipboard")
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(Theme.Colors.warning)
+          .padding(.top, reason == nil ? 0 : 1)
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Copied to clipboard").pillLabel()
+          if let reason {
+            Text(reason.prefix(1).uppercased() + reason.dropFirst())
+              .font(.system(size: 11))
+              .foregroundStyle(.white.opacity(0.6))
+              .lineLimit(2)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
+        .frame(maxWidth: 260, alignment: .leading)
       }
     case .error(let message):
-      HStack(spacing: 8) {
-        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+      HStack(alignment: isCard ? .top : .center, spacing: 8) {
+        ErrorBadge().padding(.top, isCard ? 1 : 0)
         Text(message)
-          .font(.system(size: 12, weight: .medium))
+          .pillLabel()
           .lineLimit(2)
-          .frame(maxWidth: 240, alignment: .leading)
+          .frame(maxWidth: 260, alignment: .leading)
           .fixedSize(horizontal: false, vertical: true)
       }
     case .downloading(let what, let percent):
-      HStack(spacing: 10) {
-        ProgressView(value: Double(percent), total: 100)
-          .frame(width: 90)
-        Text("Downloading \(what) · \(percent)%")
-          .font(.system(size: 12, weight: .medium))
-          .lineLimit(1)
-      }
-    case .polishing(let style):
-      HStack(spacing: 10) {
-        ReactiveOrb(state: .solving, displaySize: 50)
-        VStack(alignment: .leading, spacing: 2) {
-          Text("Polishing")
-            .font(.system(size: 13, weight: .semibold))
-          Text(style)
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-        }
+      HStack(spacing: 8) {
+        ProgressRing(fraction: Double(percent) / 100)
+        Text("\(what) \(percent)%").pillLabel().lineLimit(1)
       }
     }
   }
@@ -469,4 +414,3 @@ struct IndicatorView: View {
     String(format: "%d:%02d", model.elapsedSeconds / 60, model.elapsedSeconds % 60)
   }
 }
-
