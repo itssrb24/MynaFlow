@@ -175,7 +175,9 @@ public actor MeetingSession {
     transcriptionChain = nil
     guard !cancelled else { return finish(.cancelled) }
 
-    let merged = MeetingTranscript.merge(segments)
+    // Echoes go before summarizing, so the call's words aren't read twice
+    // or credited to the user.
+    let merged = MeetingEcho.removeEchoes(MeetingTranscript.merge(segments), window: chunkSeconds)
     let outcome =
       summarize
       ? await summarizer.summarize(merged)

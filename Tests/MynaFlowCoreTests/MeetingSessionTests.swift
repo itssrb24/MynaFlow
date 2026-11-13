@@ -14,11 +14,14 @@ private actor ChunkNamingTranscriber: TranscriptionProviding {
   var quietChunkNames: Set<String> = []
   var punctuationChunkNames: Set<String> = []
   var hook: (@Sendable () async -> Void)?
+  /// Text to return for a chunk label ("you#0"), instead of the label.
+  var scripted: [String: String] = [:]
 
   func setFailing(_ names: Set<String>) { failingChunkNames = names }
   func setQuiet(_ names: Set<String>) { quietChunkNames = names }
   func setPunctuationOnly(_ names: Set<String>) { punctuationChunkNames = names }
   func setHook(_ hook: @escaping @Sendable () async -> Void) { self.hook = hook }
+  func setScripted(_ texts: [String: String]) { scripted = texts }
 
   func prewarm() async {}
 
@@ -42,7 +45,7 @@ private actor ChunkNamingTranscriber: TranscriptionProviding {
     let parts = name.split(separator: "-")
     let label = "\(parts[parts.count - 2])#\(parts[parts.count - 1])"
     return EngineOutcome(
-      result: TranscriptionResult(text: label, durationSeconds: 1),
+      result: TranscriptionResult(text: scripted[label] ?? label, durationSeconds: 1),
       engineUsed: .parakeet, fallbackOccurred: false)
   }
 }
@@ -466,6 +469,30 @@ struct MeetingSessionTests {
     #expect(record.segments.map(\.text) == ["you#0", "others#0", "you#1", "others#1"])
     #expect(record.segments.map(\.channel) == [.you, .others, .you, .others])
     #expect(await store.meetings.count == 1)
+  }
+
+  @Test("the call heard back through the mic is left out of the saved transcript")
+  func echoLeftOut() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    await transcriber.setScripted([
+      "you#0": "I think we've got.",
+      "others#0": "I think we've got a good going. Let's get started.",
+      "you#1": "Yes, my update is on the free trial.",
+    ])
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch)
+
+    try await session.start()
+    for _ in 0..<2 { await session.append(frame(seconds: 1), channel: .you) }
+    await session.append(frame(seconds: 1), channel: .others)
+    let result = await session.stop()
+    guard case .saved(let record) = result else {
+      Issue.record("expected saved, got \(result)")
+      return
+    }
+    #expect(record.segments.map(\.channel) == [.others, .you])
+    #expect(record.segments.last?.text == "Yes, my update is on the free trial.")
   }
 
   @Test("without a model the transcript is saved with no summary and a note saying so")
