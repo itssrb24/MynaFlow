@@ -3,6 +3,31 @@
 All notable changes to Myna Flow. Versions follow the app's
 `CFBundleShortVersionString`.
 
+## 1.2.1
+
+### Fixes
+- **The call can hear you again while meeting notes record.** Apple's voice
+  processing silences the microphone for every other app while it runs; meeting
+  notes no longer use it, and dictation skips it whenever another app is using
+  the mic.
+- **Summaries work in the downloaded app.** The self-signed release could not
+  start the local language model (macOS refused its bundled libraries), so
+  meeting summaries failed and dictation cleanup fell back silently.
+- **No more echo lines.** On speakers, the call heard back through your mic no
+  longer shows up as "You" in the transcript.
+- **Dictation never vanishes.** Dictating while a file list, button or menu has
+  focus copies the text to the clipboard and says so, instead of reporting it
+  inserted.
+
+### Improvements
+- **Meetings open on their own page**, with Summary and Transcript tabs. The
+  transcript reads as speaker turns, with find (⌘F, ⌘G) and a You/Others filter.
+- **Notes started by hand take the calendar meeting's name** when one is in
+  progress.
+- **A smaller, quieter pill**: a slim capsule with the orb and a timer while you
+  talk, one word while it works.
+- **The meeting prompt appears top right**, where notifications do.
+
 ## 1.2.0
 
 ### Meeting notes
