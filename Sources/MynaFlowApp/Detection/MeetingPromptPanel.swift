@@ -28,12 +28,15 @@ final class MeetingPromptModel {
   @ObservationIgnored var onSecondary: () -> Void = {}
 }
 
-/// A small card at the top of the screen asking about meeting notes. It
+/// A small card at the top right of the screen, where macOS notifications
+/// appear, asking about meeting notes. It
 /// never takes focus from the call the user is joining.
 @MainActor
 final class MeetingPromptPanelController {
   static let size = NSSize(width: 380, height: 148)
-  private static let topInset: CGFloat = 36
+  /// From the menu bar and the right edge, matching notification banners.
+  private static let topInset: CGFloat = 12
+  private static let rightInset: CGFloat = 12
 
   let model = MeetingPromptModel()
   private let panel: NSPanel
@@ -63,7 +66,7 @@ final class MeetingPromptPanelController {
     if let frame = screen?.visibleFrame {
       panel.setFrameOrigin(
         NSPoint(
-          x: frame.midX - Self.size.width / 2,
+          x: frame.maxX - Self.size.width - Self.rightInset,
           y: frame.maxY - Self.size.height - Self.topInset))
     }
     panel.orderFrontRegardless()
