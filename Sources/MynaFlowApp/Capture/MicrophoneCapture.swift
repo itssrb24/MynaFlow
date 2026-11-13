@@ -29,10 +29,15 @@ final class MicrophoneCapture {
 
   /// Capture device UID; nil follows the system default input.
   var preferredDeviceUID: String?
-  /// Whether voice processing may duck other apps' audio. Dictation keeps the
-  /// system default; meeting notes turn it off, since the "other audio" is
-  /// the call itself.
+  /// Whether voice processing may duck other apps' audio. Only matters when
+  /// `useVoiceProcessing` is on; dictation keeps the system default.
   var duckOtherAudio = true
+  /// Whether to run Apple's voice processing (echo cancellation, noise
+  /// suppression). It is system-wide on macOS: while any process has it on,
+  /// every other app reading the microphone gets near-silence. Dictation is
+  /// short and keeps it; meeting notes run beside a call app that needs the
+  /// mic, so they turn it off — otherwise the call stops hearing the user.
+  var useVoiceProcessing = true
   /// Fires when the engine's input graph changes underneath a running
   /// capture — device unplugged, default input switched, or a wake from
   /// sleep. The stream is finished; the owner decides what to do with the
@@ -59,16 +64,18 @@ final class MicrophoneCapture {
     // case Apple's AEC/noise suppression is tuned for, and dictation has no
     // second in-room speaker to lose. Set before the format is read, since
     // enabling it changes the node's format.
-    do {
-      try input.setVoiceProcessingEnabled(true)
-      voiceProcessingActive = true
-      if !duckOtherAudio {
-        input.voiceProcessingOtherAudioDuckingConfiguration =
-          AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
-            enableAdvancedDucking: false, duckingLevel: .min)
+    if useVoiceProcessing {
+      do {
+        try input.setVoiceProcessingEnabled(true)
+        voiceProcessingActive = true
+        if !duckOtherAudio {
+          input.voiceProcessingOtherAudioDuckingConfiguration =
+            AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
+              enableAdvancedDucking: false, duckingLevel: .min)
+        }
+      } catch {
+        Self.log.warning("voice processing unavailable: \(error.localizedDescription)")
       }
-    } catch {
-      Self.log.warning("voice processing unavailable: \(error.localizedDescription)")
     }
     let format = input.outputFormat(forBus: 0)
     // With no usable input device (everything unplugged, AirPods just gone,

@@ -149,7 +149,10 @@ final class MeetingRecorder {
   /// Both captures plus their pumps. Re-run after an audio route change.
   private func startCaptures(into session: MeetingSession) throws {
     let others = try system.start()
-    mic.duckOtherAudio = false
+    // No voice processing: it silences the mic for every other app, so the
+    // call would stop hearing the user. Speaker echo it would have removed is
+    // dropped from the transcript by MeetingEcho instead.
+    mic.useVoiceProcessing = false
     let you = try mic.start { [weak self] level in self?.indicator.submitAudioLevel(level) }
     // A device change (headphones, AirPods) or a sleep/wake reconfigures the
     // audio route under both captures. Rebuild them rather than stop.
