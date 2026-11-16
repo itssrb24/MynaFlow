@@ -98,7 +98,16 @@ case "$MODE" in
 esac
 
 if (( KEEP_MODELS )) && [[ -d "$SCRATCH/Models.keep" ]]; then
-  mkdir -p "$SUPPORT"; mv "$SCRATCH/Models.keep" "$SUPPORT/Models"
+  # The app may already have launched and created an empty Models folder, and
+  # `mv dir existing-dir` nests rather than replaces — which left a second,
+  # unused 586 MB Parakeet under Models/Models.keep/Models.keep. Put each
+  # model back by name instead, replacing whatever the fresh app made.
+  mkdir -p "$SUPPORT/Models"
+  for entry in "$SCRATCH/Models.keep"/*(DN); do
+    rm -rf "$SUPPORT/Models/${entry:t}"
+    mv "$entry" "$SUPPORT/Models/"
+  done
+  rmdir "$SCRATCH/Models.keep"
 fi
 
 if (( NO_RESET )); then
