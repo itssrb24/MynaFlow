@@ -6,6 +6,7 @@ import SwiftUI
 struct MeetingsView: View {
   let recorder: MeetingRecorder
   let detection: MeetingDetectionController
+  let speakers: SpeakerSeparation
   @State private var selected: UUID?
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var confirmDelete: MeetingRecord?
@@ -19,7 +20,8 @@ struct MeetingsView: View {
           back: { selected = nil },
           export: { recorder.export(meeting) },
           copy: { recorder.copyMarkdown(meeting) },
-          delete: { confirmDelete = meeting })
+          delete: { confirmDelete = meeting },
+          rename: { speaker, name in Task { await recorder.renameSpeaker(speaker, to: name, in: meeting) } })
         .transition(.opacity.combined(with: .offset(x: 16)))
       } else {
         listPage.transition(.opacity)
@@ -48,6 +50,7 @@ struct MeetingsView: View {
     ) {
       RecordControl(recorder: recorder)
       MeetingDetectionCard(detection: detection)
+      SpeakerSeparationCard(speakers: speakers)
       if !recorder.meetings.isEmpty { searchField }
       list
     }

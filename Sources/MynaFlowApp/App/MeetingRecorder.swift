@@ -67,6 +67,8 @@ final class MeetingRecorder {
   @ObservationIgnored private var recoveryDirectory: URL?
   @ObservationIgnored private var makeTranscriber: () -> (any TranscriptionProviding)? = { nil }
   @ObservationIgnored private var currentModel: () -> (any LocalLanguageModel)? = { nil }
+  /// A fresh speaker diarizer per meeting, or nil to keep "Others" whole.
+  @ObservationIgnored private var makeDiarizer: () async -> (any SpeakerDiarizing)? = { nil }
   /// The calendar meeting happening now, for notes started by hand. Set by
   /// the detection controller; nil while calendar prompts are off.
   @ObservationIgnored var currentCalendarTitle: () -> String? = { nil }
@@ -76,8 +78,10 @@ final class MeetingRecorder {
     scratch: URL,
     recoveryDirectory: URL,
     transcriber: @escaping () -> (any TranscriptionProviding)?,
-    model: @escaping () -> (any LocalLanguageModel)?
+    model: @escaping () -> (any LocalLanguageModel)?,
+    diarizer: @escaping () async -> (any SpeakerDiarizing)? = { nil }
   ) async {
+    makeDiarizer = diarizer
     self.store = store
     self.scratch = scratch
     self.recoveryDirectory = recoveryDirectory
@@ -116,12 +120,17 @@ final class MeetingRecorder {
     guard let transcriber = makeTranscriber() else {
       return fail("No speech engine is available, so meeting notes can't start.")
     }
+    // Loading the speaker models takes a moment the first time; a second
+    // Start pressed meanwhile must not open a second session.
+    let diarizer = await makeDiarizer()
+    guard phase == .idle else { return }
     phase = .starting
     let session = MeetingSession(
       transcriber: transcriber,
       summarizer: MeetingSummarizer(model: currentModel()),
       store: store,
-      scratchDirectory: scratch)
+      scratchDirectory: scratch,
+      diarizer: diarizer)
     // Registered before the first await, so a quit or Discard during
     // `.starting` can find and cancel it.
     self.session = session
@@ -269,6 +278,16 @@ final class MeetingRecorder {
 
   func refresh() async {
     meetings = (try? await store?.meetings(limit: 200)) ?? []
+  }
+
+  /// Names one "Others" speaker in one meeting; a blank name clears it.
+  func renameSpeaker(_ speaker: Int, to name: String, in meeting: MeetingRecord) async {
+    do {
+      try await store?.setSpeakerName(name, speaker: speaker, meetingID: meeting.id)
+    } catch {
+      post("Could not rename the speaker: \(error.localizedDescription)", .error)
+    }
+    await refresh()
   }
 
   func delete(_ meeting: MeetingRecord) async {

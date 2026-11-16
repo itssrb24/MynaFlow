@@ -91,3 +91,63 @@ struct MeetingDetectionCard: View {
     }
   }
 }
+
+/// Speaker separation for "Others": an explicit ~14 MB install, then a
+/// switch. Says plainly that audio is still never kept.
+struct SpeakerSeparationCard: View {
+  let speakers: SpeakerSeparation
+
+  var body: some View {
+    HStack(alignment: .center, spacing: Theme.Spacing.md) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Separate speakers")
+          .font(Theme.Fonts.bodyStrong)
+          .foregroundStyle(Theme.Colors.textPrimary)
+        Text(note)
+          .font(Theme.Fonts.caption)
+          .foregroundStyle(isFailed ? Theme.Colors.danger : Theme.Colors.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      Spacer(minLength: Theme.Spacing.md)
+      control
+    }
+    .tint(Theme.Colors.accent)
+    .raised()
+  }
+
+  @ViewBuilder
+  private var control: some View {
+    switch speakers.state {
+    case .installed:
+      Toggle(
+        "Separate speakers",
+        isOn: Binding(get: { speakers.isEnabled }, set: { speakers.setEnabled($0) })
+      )
+      .labelsHidden()
+      .toggleStyle(.switch)
+    case .installing(let fraction):
+      ProgressView(value: fraction).frame(width: 90)
+    case .notInstalled, .failed:
+      Button("Install · 14 MB") { speakers.install() }
+        .buttonStyle(NeuButtonStyle(prominent: true))
+        .help("Downloads the on-device speaker models once, from huggingface.co")
+    }
+  }
+
+  private var isFailed: Bool {
+    if case .failed = speakers.state { return true }
+    return false
+  }
+
+  private var note: String {
+    switch speakers.state {
+    case .failed(let message): message
+    case .installing: "Downloading the speaker models…"
+    case .installed where speakers.isEnabled:
+      "Others is split into Speaker 1, 2, … — click a speaker to name them. Runs on this Mac; audio is still deleted as it's transcribed."
+    case .installed: "Off: everyone on the call is labelled Others."
+    case .notInstalled:
+      "Tell the people on a call apart as Speaker 1, 2, … Runs on this Mac; audio is still deleted as it's transcribed."
+    }
+  }
+}

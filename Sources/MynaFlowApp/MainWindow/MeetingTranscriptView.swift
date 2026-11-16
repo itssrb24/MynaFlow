@@ -4,7 +4,11 @@ import SwiftUI
 /// Find-in-transcript state shared by the toolbar (above the scroll) and the
 /// body (inside it).
 struct TranscriptFind: Equatable {
-  enum Speaker: Hashable { case all, you, others }
+  enum Speaker: Hashable {
+    case all, you, others
+    /// One "Others" speaker, by number.
+    case person(Int)
+  }
 
   var query = ""
   var speaker: Speaker = .all
@@ -20,11 +24,12 @@ struct TranscriptFind: Equatable {
     current = ((current + delta) % hitCount + hitCount) % hitCount
   }
 
-  func includes(_ channel: MeetingChannel) -> Bool {
+  func includes(_ channel: MeetingChannel, speaker number: Int? = nil) -> Bool {
     switch speaker {
     case .all: true
     case .you: channel == .you
     case .others: channel == .others
+    case .person(let wanted): channel == .others && number == wanted
     }
   }
 }
@@ -32,6 +37,9 @@ struct TranscriptFind: Equatable {
 /// Find field with a match counter and stepping, plus a speaker filter.
 struct TranscriptToolbar: View {
   @Binding var find: TranscriptFind
+  /// "Others" speakers told apart in this meeting; each gets a filter.
+  var speakers: [Int] = []
+  let meeting: MeetingRecord
   @FocusState private var focused: Bool
 
   var body: some View {
@@ -66,19 +74,27 @@ struct TranscriptToolbar: View {
       .inset(padding: Theme.Spacing.sm)
       .frame(maxWidth: 340)
 
-      PillSegments(
-        selection: $find.speaker,
-        options: [
-          .init(value: .all, title: "All"),
-          .init(value: .you, title: "You"),
-          .init(value: .others, title: "Others"),
-        ], compact: true)
+      PillSegments(selection: $find.speaker, options: filterOptions, compact: true)
       .accessibilityLabel("Show lines from")
       Spacer(minLength: 0)
     }
     .onChange(of: find.query) { find.current = 0 }
     .onChange(of: find.speaker) { find.current = 0 }
     .onChange(of: find.focusRequest) { focused = true }
+  }
+
+  /// All / You / Others, then each speaker by name — up to five, beyond
+  /// which "Others" still covers them all.
+  private var filterOptions: [PillSegments<TranscriptFind.Speaker>.Option] {
+    var options: [PillSegments<TranscriptFind.Speaker>.Option] = [
+      .init(value: .all, title: "All"), .init(value: .you, title: "You"),
+      .init(value: .others, title: "Others"),
+    ]
+    for number in speakers.prefix(5) {
+      options.append(
+        .init(value: .person(number), title: meeting.label(channel: .others, speaker: number)))
+    }
+    return options
   }
 
   private var counter: String {
@@ -101,9 +117,12 @@ struct TranscriptToolbar: View {
 /// stretch — with "You" marked by an accent rule, matches highlighted, and
 /// the current match scrolled into view.
 struct TranscriptBody: View {
-  let segments: [MeetingSegment]
+  let meeting: MeetingRecord
   @Binding var find: TranscriptFind
   let proxy: ScrollViewProxy
+  let rename: (Int, String) -> Void
+
+  private var segments: [MeetingSegment] { meeting.segments }
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   private struct Hit {
@@ -112,7 +131,7 @@ struct TranscriptBody: View {
   }
 
   var body: some View {
-    let turns = MeetingTranscript.turns(segments).filter { find.includes($0.channel) }
+    let turns = MeetingTranscript.turns(segments).filter { find.includes($0.channel, speaker: $0.speaker) }
     let hits = turns.enumerated().flatMap { index, turn in
       MeetingSearch.matches(of: find.query, in: turn.text).map { Hit(turn: index, range: $0) }
     }
@@ -122,7 +141,7 @@ struct TranscriptBody: View {
       if segments.isEmpty {
         placeholder("Nothing was transcribed.")
       } else if turns.isEmpty {
-        placeholder(find.speaker == .you ? "Nothing from You in this meeting." : "Nothing from Others in this meeting.")
+        placeholder("Nothing from \(filterName) in this meeting.")
       } else {
         LazyVStack(alignment: .leading, spacing: Theme.Spacing.lg) {
           ForEach(Array(turns.enumerated()), id: \.offset) { index, turn in
@@ -141,6 +160,14 @@ struct TranscriptBody: View {
     .onChange(of: find.query) { scroll(to: current) }
   }
 
+  private var filterName: String {
+    switch find.speaker {
+    case .all, .others: "Others"
+    case .you: "You"
+    case .person(let number): meeting.label(channel: .others, speaker: number)
+    }
+  }
+
   private func scroll(to hit: Hit?) {
     guard let hit else { return }
     withAnimation(reduceMotion ? nil : Theme.Motion.ease) {
@@ -151,14 +178,17 @@ struct TranscriptBody: View {
   private func row(
     _ turn: MeetingTurn, ranges: [Range<String.Index>], current: Range<String.Index>?
   ) -> some View {
-    let isYou = turn.channel == .you
+    let tone = SpeakerTone(channel: turn.channel, speaker: turn.speaker)
     return HStack(alignment: .top, spacing: Theme.Spacing.md) {
       RoundedRectangle(cornerRadius: 1)
-        .fill(isYou ? Theme.Colors.accent : Theme.Colors.hairline)
+        .fill(tone.rule)
         .frame(width: 2)
       VStack(alignment: .leading, spacing: Theme.Spacing.xs + 2) {
         HStack(spacing: Theme.Spacing.sm) {
-          SpeakerChip(channel: turn.channel)
+          SpeakerChip(
+            label: meeting.label(channel: turn.channel, speaker: turn.speaker), tone: tone,
+            renameable: turn.speaker.map { number in { name in rename(number, name) } },
+            currentName: turn.speaker.flatMap { meeting.speakerNames[$0] })
           Text(MeetingTranscript.timestamp(turn.startSeconds))
             .font(Theme.Fonts.mono)
             .monospacedDigit()
@@ -205,19 +235,92 @@ struct TranscriptBody: View {
   }
 }
 
-/// "You" in the accent, "Others" neutral — the two voices of a call.
+/// The colours one voice uses: "You" in the accent, each "Others" speaker
+/// in its own muted hue so a back-and-forth reads at a glance, and plain
+/// "Others" (not told apart) neutral.
+struct SpeakerTone {
+  let text: Color
+  let fill: Color
+  let rule: Color
+
+  private static let palette: [Color] = [
+    Color(red: 0.55, green: 0.72, blue: 0.86),  // blue
+    Color(red: 0.62, green: 0.80, blue: 0.62),  // green
+    Color(red: 0.84, green: 0.62, blue: 0.78),  // rose
+    Color(red: 0.70, green: 0.66, blue: 0.90),  // violet
+    Color(red: 0.86, green: 0.70, blue: 0.52),  // sand
+    Color(red: 0.55, green: 0.80, blue: 0.78),  // teal
+  ]
+
+  init(channel: MeetingChannel, speaker: Int?) {
+    if channel == .you {
+      (text, fill, rule) = (Theme.Colors.accent, Theme.Colors.accentMuted, Theme.Colors.accent)
+    } else if let speaker {
+      let hue = Self.palette[(speaker - 1) % Self.palette.count]
+      (text, fill, rule) = (hue, hue.opacity(0.16), hue.opacity(0.7))
+    } else {
+      (text, fill, rule) = (Theme.Colors.textSecondary, Theme.Colors.surface, Theme.Colors.hairline)
+    }
+  }
+}
+
+/// Who spoke. An "Others" speaker's chip opens a small field to name them
+/// for this meeting.
 struct SpeakerChip: View {
-  let channel: MeetingChannel
+  let label: String
+  let tone: SpeakerTone
+  /// Set for a told-apart speaker; called with the new name ("" clears it).
+  var renameable: ((String) -> Void)?
+  var currentName: String?
+  @State private var editing = false
+  @State private var draft = ""
 
   var body: some View {
-    let isYou = channel == .you
-    Text(channel.label)
+    let chip = Text(label)
       .font(Theme.Fonts.caption)
-      .foregroundStyle(isYou ? Theme.Colors.accent : Theme.Colors.textSecondary)
+      .foregroundStyle(tone.text)
+      .lineLimit(1)
       .padding(.horizontal, 7)
       .padding(.vertical, 2)
-      .background(
-        Capsule().fill(isYou ? Theme.Colors.accentMuted : Theme.Colors.surface))
+      .background(Capsule().fill(tone.fill))
       .overlay(Capsule().strokeBorder(Theme.Colors.hairline))
+    if let renameable {
+      Button {
+        draft = currentName ?? ""
+        editing = true
+      } label: {
+        chip
+      }
+      .buttonStyle(.plain)
+      .help("Name this speaker")
+      .accessibilityHint("Names this speaker for this meeting")
+      .popover(isPresented: $editing, arrowEdge: .bottom) {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+          Text("Name \(label)").font(Theme.Fonts.bodyStrong)
+          TextField("Name", text: $draft)
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 200)
+            .onSubmit { commit(renameable) }
+          HStack {
+            if currentName != nil {
+              Button("Clear") {
+                draft = ""
+                commit(renameable)
+              }
+            }
+            Spacer()
+            Button("Save") { commit(renameable) }.keyboardShortcut(.defaultAction)
+          }
+        }
+        .padding(Theme.Spacing.md)
+      }
+    } else {
+      chip
+    }
+  }
+
+  private func commit(_ rename: (String) -> Void) {
+    rename(draft)
+    editing = false
   }
 }

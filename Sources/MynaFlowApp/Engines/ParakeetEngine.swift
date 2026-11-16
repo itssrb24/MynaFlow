@@ -142,10 +142,16 @@ actor ParakeetEngine: SpeechEngine, TranscriptionProviding {
     guard loaded else { throw SpeechEngineError("Parakeet models are not installed") }
     await applyVocabulary(hints)
     let (samples, duration) = try Self.read16kMono(from: audio)
-    let text = try await manager.transcribe(samples)
-      .trimmingCharacters(in: .whitespacesAndNewlines)
+    // Same decode as plain transcription, plus the token emission times —
+    // meeting notes use them to split a chunk between speakers.
+    let timed = try await manager.transcribeWithTimings(samples)
+    let text = timed.text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { throw SpeechEngineError.nothingRecognized }
-    return TranscriptionResult(text: text, durationSeconds: duration)
+    let words = buildWordTimings(from: timed.tokenTimings).map {
+      TimedWord(text: $0.word, start: $0.startTime, end: $0.endTime)
+    }
+    return TranscriptionResult(
+      text: text, durationSeconds: duration, words: words.isEmpty ? nil : words)
   }
 
   /// Decode any WAV/AIFF into 16 kHz mono Float samples. Dictation WAVs are

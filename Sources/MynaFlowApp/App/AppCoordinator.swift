@@ -14,6 +14,8 @@ final class AppCoordinator {
   /// Meeting notes: explicit start/stop, its own indicator and capture.
   let meetings = MeetingRecorder()
   let meetingDetection = MeetingDetectionController()
+  /// Telling "Others" speakers apart in meeting notes.
+  let speakers = SpeakerSeparation()
   private(set) var recentDictations: [DictationRecord] = []
   private(set) var menuBarState: MenuBarState = .idle
 
@@ -377,6 +379,7 @@ final class AppCoordinator {
   /// is read at each start, so installing one later takes effect next time.
   private func configureMeetings(store: FlowStore, scratch: URL, recovery: URL) async {
     meetings.setInputDevice(selectedInputUID)
+    if let paths { await speakers.configure(modelsDirectory: paths.models, store: store) }
     await meetings.configure(
       store: store, scratch: scratch, recoveryDirectory: recovery,
       transcriber: { [weak self] in
@@ -387,7 +390,8 @@ final class AppCoordinator {
       model: { [weak self] in
         guard let self, self.polishModelInstalled, let provider = self.languageProvider else { return nil }
         return provider
-      })
+      },
+      diarizer: { [weak self] in await self?.speakers.makeDiarizer() })
   }
 
   private func transcriptionProvider() -> any TranscriptionProviding {

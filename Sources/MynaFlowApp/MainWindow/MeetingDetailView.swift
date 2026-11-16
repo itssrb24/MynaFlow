@@ -12,6 +12,8 @@ struct MeetingDetailView: View {
   let export: () -> Void
   let copy: () -> Void
   let delete: () -> Void
+  /// Names (or with "", un-names) an "Others" speaker in this meeting.
+  let rename: (Int, String) -> Void
 
   @State private var tab: Tab
   @State private var find: TranscriptFind
@@ -23,8 +25,10 @@ struct MeetingDetailView: View {
   /// Opened from a search, the transcript comes up with that search found.
   init(
     meeting: MeetingRecord, initialQuery: String, back: @escaping () -> Void,
-    export: @escaping () -> Void, copy: @escaping () -> Void, delete: @escaping () -> Void
+    export: @escaping () -> Void, copy: @escaping () -> Void, delete: @escaping () -> Void,
+    rename: @escaping (Int, String) -> Void
   ) {
+    self.rename = rename
     self.meeting = meeting
     self.back = back
     self.export = export
@@ -91,7 +95,7 @@ struct MeetingDetailView: View {
         Spacer()
       }
       if tab == .transcript, !meeting.segments.isEmpty {
-        TranscriptToolbar(find: $find)
+        TranscriptToolbar(find: $find, speakers: speakerNumbers, meeting: meeting)
           .transition(.opacity)
       }
     }
@@ -118,6 +122,11 @@ struct MeetingDetailView: View {
     }
   }
 
+  /// The "Others" speakers told apart in this meeting, in number order.
+  private var speakerNumbers: [Int] {
+    Set(meeting.segments.compactMap(\.speaker)).sorted()
+  }
+
   // MARK: - Body
 
   @ViewBuilder
@@ -129,7 +138,7 @@ struct MeetingDetailView: View {
       }
       .transition(.opacity)
     case .transcript:
-      TranscriptBody(segments: meeting.segments, find: $find, proxy: proxy)
+      TranscriptBody(meeting: meeting, find: $find, proxy: proxy, rename: rename)
         .transition(.opacity)
     }
   }
