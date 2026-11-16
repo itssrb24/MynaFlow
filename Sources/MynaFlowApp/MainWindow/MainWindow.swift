@@ -46,6 +46,11 @@ struct MainWindowView: View {
     .background(Theme.Colors.base)
     .preferredColorScheme(.dark)
     .frame(minWidth: 860, minHeight: 560)
+    .onChange(of: coordinator.requestedSection, initial: true) {
+      guard let requested = coordinator.requestedSection else { return }
+      section = requested
+      coordinator.requestedSection = nil
+    }
   }
 
   private var sidebar: some View {

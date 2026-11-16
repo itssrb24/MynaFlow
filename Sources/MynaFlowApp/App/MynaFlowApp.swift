@@ -152,6 +152,19 @@ struct MenuBarMenu: View {
       coordinator.meetings.toggle()
     }
     .disabled(coordinator.meetings.phase == .starting || coordinator.meetings.phase == .finishing)
+    if coordinator.meetings.isRecording {
+      Button("Add Meeting Note…") {
+        coordinator.requestedSection = .meetings
+        coordinator.meetings.requestNoteFocus()
+        coordinator.showMainWindow { id in openWindow(id: id) }
+      }
+      Button(
+        "Flag This Moment"
+          + (coordinator.hotkeyConfiguration[.flagMoment].map { " (\($0.keycapLabel))" } ?? "")
+      ) {
+        coordinator.meetings.flagMoment()
+      }
+    }
     Divider()
     if coordinator.recentDictations.isEmpty {
       Text("No dictations yet")

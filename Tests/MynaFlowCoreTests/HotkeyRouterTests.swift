@@ -59,6 +59,15 @@ struct HotkeyRouterTests {
     #expect(router.route(.keyDown(keyCode: 18, modifiers: controlOption, isRepeat: false)) == [.action(.style1)])
   }
 
+  @Test("A bound flag-moment shortcut runs; it is unbound by default")
+  func flagMoment() {
+    #expect(HotkeyConfiguration.defaultBindings[.flagMoment] == nil)
+    var config = HotkeyConfiguration(bindings: [:])
+    config[.flagMoment] = HotkeyShortcut(keyCode: 3, modifiers: controlOption, keyLabel: "F")
+    var router = HotkeyRouter(configuration: config)
+    #expect(router.route(.keyDown(keyCode: 3, modifiers: controlOption, isRepeat: false)) == [.action(.flagMoment)])
+  }
+
   @Test("Key repeats never re-trigger an action")
   func repeatsIgnored() {
     var router = self.router()

@@ -15,6 +15,7 @@ struct HotkeysView: View {
         row(.undoLast, note: "⌘Z in the app that just received a dictation (within 90 seconds).")
         row(.reinsertLast, note: "Puts your most recent dictation at the cursor again.")
         row(.openScratchpad, note: "Opens a floating note you can dictate into, then paste anywhere.")
+        row(.flagMoment, note: "While meeting notes record, marks the last 40 seconds as important for the summary.")
       }
       .raised()
 

@@ -19,6 +19,7 @@ struct MeetingDetailView: View {
   let link: (CalendarMeeting) -> Void
   let isResummarizing: Bool
   let resummarize: (MeetingType?) -> Void
+  let editTurn: (MeetingTurn, String) -> Void
 
   @State private var tab: Tab
   @State private var find: TranscriptFind
@@ -35,8 +36,10 @@ struct MeetingDetailView: View {
     linkCandidates: @escaping () -> [CalendarMeeting] = { [] },
     link: @escaping (CalendarMeeting) -> Void = { _ in },
     isResummarizing: Bool = false,
-    resummarize: @escaping (MeetingType?) -> Void = { _ in }
+    resummarize: @escaping (MeetingType?) -> Void = { _ in },
+    editTurn: @escaping (MeetingTurn, String) -> Void = { _, _ in }
   ) {
+    self.editTurn = editTurn
     self.isResummarizing = isResummarizing
     self.resummarize = resummarize
     self.naming = naming
@@ -158,7 +161,7 @@ struct MeetingDetailView: View {
       }
       .transition(.opacity)
     case .transcript:
-      TranscriptBody(meeting: meeting, find: $find, proxy: proxy, naming: naming)
+      TranscriptBody(meeting: meeting, find: $find, proxy: proxy, naming: naming, edit: editTurn)
         .transition(.opacity)
     }
   }

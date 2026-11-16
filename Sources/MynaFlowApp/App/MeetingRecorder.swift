@@ -48,6 +48,12 @@ final class MeetingRecorder {
   private(set) var notice: MeetingNotice?
   /// Seconds recorded so far, for the Meetings page status line.
   private(set) var elapsedSeconds = 0
+  /// Notes and flags added to the meeting being recorded, newest last.
+  private(set) var liveNotes: [MeetingNote] = []
+  /// Bumped to put the cursor in the note field (from the menu bar).
+  private(set) var noteFocusRequests = 0
+
+  func requestNoteFocus() { noteFocusRequests += 1 }
   var isRecording: Bool { phase == .recording }
   /// Bumped at each recording start, so an answer meant for one recording
   /// (a "call ended" countdown) can never stop the next one.
@@ -71,6 +77,10 @@ final class MeetingRecorder {
   @ObservationIgnored private var makeDiarizer: () async -> (any SpeakerDiarizing)? = { nil }
   /// Known voices for a meeting when the user opted in; nil otherwise.
   @ObservationIgnored private var meetingVoices: (Set<String>) async -> MeetingVoices? = { _ in nil }
+  /// The user's approved word replacements, shared with dictation.
+  @ObservationIgnored private var replacements: () -> LearnedRules = { LearnedRules() }
+  /// Called after an edited line taught new words, so lists elsewhere refresh.
+  @ObservationIgnored private var didLearn: () async -> Void = {}
   /// The calendar meeting happening now, for notes started by hand. Set by
   /// the detection controller; nil while calendar prompts are off.
   @ObservationIgnored var currentCalendarMeeting: () -> CalendarMeeting? = { nil }
@@ -82,8 +92,12 @@ final class MeetingRecorder {
     transcriber: @escaping () -> (any TranscriptionProviding)?,
     model: @escaping () -> (any LocalLanguageModel)?,
     diarizer: @escaping () async -> (any SpeakerDiarizing)? = { nil },
-    voices: @escaping (Set<String>) async -> MeetingVoices? = { _ in nil }
+    voices: @escaping (Set<String>) async -> MeetingVoices? = { _ in nil },
+    replacements: @escaping () -> LearnedRules = { LearnedRules() },
+    didLearn: @escaping () async -> Void = {}
   ) async {
+    self.replacements = replacements
+    self.didLearn = didLearn
     makeDiarizer = diarizer
     meetingVoices = voices
     self.store = store
@@ -146,7 +160,8 @@ final class MeetingRecorder {
       let context = (meeting ?? currentCalendarMeeting()).map(MeetingContext.init)
       let invited = Set(context?.others.compactMap(\.email) ?? [])
       try await session.start(
-        context: context, vocabulary: vocabulary, voices: await meetingVoices(invited))
+        context: context, vocabulary: vocabulary, voices: await meetingVoices(invited),
+        replacements: replacements())
       guard phase == .starting else {
         // Cancelled while the session was opening; close what it opened.
         await session.cancel()
@@ -162,6 +177,7 @@ final class MeetingRecorder {
       return fail(error.localizedDescription)
     }
     phase = .recording
+    liveNotes = []
     recordingCount += 1
     showIndicator()
   }
@@ -342,6 +358,40 @@ final class MeetingRecorder {
       try await store.updateSummary(of: updated)
     } catch {
       post("Could not save the new summary: \(error.localizedDescription)", .error)
+    }
+    await refresh()
+  }
+
+  // MARK: - Notes and flags while recording
+
+  /// A typed note for the meeting being recorded.
+  func addNote(_ text: String) async {
+    guard isRecording, let session, await session.addNote(text) else { return }
+    liveNotes.append(MeetingNote(kind: .note, seconds: Double(elapsedSeconds), text: text))
+  }
+
+  /// Marks what was just said as important; the indicator confirms it.
+  func flagMoment() {
+    guard isRecording, let session else { return }
+    Task {
+      guard await session.flagMoment() else { return }
+      liveNotes.append(MeetingNote(kind: .flag, seconds: Double(elapsedSeconds)))
+      post("Flagged the last 40 seconds as important.", .info)
+    }
+  }
+
+  /// Saves a hand-edited transcript turn and learns any names it fixes.
+  func editTurn(_ turn: MeetingTurn, to text: String, in meeting: MeetingRecord) async {
+    do {
+      let learned = try await store?.editTurn(
+        startingAt: turn.startSeconds, channel: turn.channel, text: text, meetingID: meeting.id) ?? []
+      if !learned.isEmpty {
+        let names = learned.map(\.right).joined(separator: ", ")
+        post("Learned \(names) — added to your vocabulary. The fix is waiting in Learning to approve.", .info)
+        await didLearn()
+      }
+    } catch {
+      post("Could not save the edit: \(error.localizedDescription)", .error)
     }
     await refresh()
   }

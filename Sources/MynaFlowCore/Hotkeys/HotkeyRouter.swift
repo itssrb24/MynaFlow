@@ -32,7 +32,7 @@ public struct HotkeyRouter {
 
   /// Single-press actions, in match order.
   static let pressActions: [HotkeyAction] =
-    HotkeyAction.styleActions + [.undoLast, .reinsertLast, .openScratchpad]
+    HotkeyAction.styleActions + [.undoLast, .reinsertLast, .openScratchpad, .flagMoment]
 
   public init(configuration: HotkeyConfiguration) {
     self.configuration = configuration

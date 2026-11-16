@@ -18,6 +18,8 @@ final class AppCoordinator {
   let speakers = SpeakerSeparation()
   private(set) var recentDictations: [DictationRecord] = []
   private(set) var menuBarState: MenuBarState = .idle
+  /// A page the main window should switch to (set from the menu bar).
+  var requestedSection: MainSection?
 
   enum MenuBarState {
     case idle
@@ -392,7 +394,15 @@ final class AppCoordinator {
         return provider
       },
       diarizer: { [weak self] in await self?.speakers.makeDiarizer() },
-      voices: { [weak self] invited in await self?.speakers.meetingVoices(invited: invited) })
+      voices: { [weak self] invited in await self?.speakers.meetingVoices(invited: invited) },
+      replacements: { [weak self] in
+        guard let self else { return LearnedRules() }
+        return LearnedRules(approved: self.approvedRules.map(\.rule), enabled: self.learningEnabled)
+      },
+      didLearn: { [weak self] in
+        await self?.refreshLearnedRules()
+        await self?.refreshVocabulary()
+      })
   }
 
   private func transcriptionProvider() -> any TranscriptionProviding {
@@ -1513,6 +1523,7 @@ final class AppCoordinator {
         case .undoLast: self?.undoLastDictation()
         case .reinsertLast: self?.reinsertLast()
         case .openScratchpad: self?.openScratchpad()
+        case .flagMoment: self?.meetings.flagMoment()
         default: self?.polishSelection(action: action)
         }
       })

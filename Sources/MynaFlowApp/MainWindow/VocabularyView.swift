@@ -25,6 +25,11 @@ struct VocabularyView: View {
                 Text(term.term).font(Theme.Fonts.bodyStrong).foregroundStyle(Theme.Colors.textPrimary)
                 if term.source == .promoted {
                   Image(systemName: "sparkle").font(.system(size: 9)).foregroundStyle(Theme.Colors.accent)
+                    .help("Learned from a correction you approved")
+                } else if term.source == .learned {
+                  Image(systemName: "text.badge.checkmark").font(.system(size: 9))
+                    .foregroundStyle(Theme.Colors.accent)
+                    .help("Learned from a meeting transcript you edited")
                 }
                 Button {
                   Task { await coordinator.removeVocabularyTerm(term.term) }

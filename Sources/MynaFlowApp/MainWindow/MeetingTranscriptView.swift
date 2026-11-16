@@ -121,6 +121,16 @@ struct TranscriptBody: View {
   @Binding var find: TranscriptFind
   let proxy: ScrollViewProxy
   let naming: SpeakerNaming
+  /// Saves a hand-edited turn (and learns names from it).
+  var edit: (MeetingTurn, String) -> Void = { _, _ in }
+  /// The turn being edited, by its start time and channel.
+  @State private var editing: TurnKey?
+  @State private var draft = ""
+
+  private struct TurnKey: Equatable {
+    let channel: MeetingChannel
+    let seconds: Double
+  }
 
   private var segments: [MeetingSegment] { meeting.segments }
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -144,11 +154,17 @@ struct TranscriptBody: View {
         placeholder("Nothing from \(filterName) in this meeting.")
       } else {
         LazyVStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+          let notes = Self.notesAfter(turns, meeting.notes)
           ForEach(Array(turns.enumerated()), id: \.offset) { index, turn in
-            row(
-              turn,
-              ranges: hits.filter { $0.turn == index }.map(\.range),
-              current: current?.turn == index ? current?.range : nil)
+            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+              row(
+                turn,
+                ranges: hits.filter { $0.turn == index }.map(\.range),
+                current: current?.turn == index ? current?.range : nil)
+              ForEach(Array((notes[index] ?? []).enumerated()), id: \.offset) { _, note in
+                NoteMarker(note: note).padding(.leading, Theme.Spacing.md + 2)
+              }
+            }
             .id(index)
           }
         }
@@ -193,14 +209,65 @@ struct TranscriptBody: View {
             .monospacedDigit()
             .foregroundStyle(Theme.Colors.textTertiary)
         }
-        Text(Self.highlighted(turn.text, ranges: ranges, current: current))
-          .font(Theme.Fonts.reading)
-          .lineSpacing(Theme.Fonts.readingLineSpacing)
-          .foregroundStyle(Theme.Colors.textPrimary)
-          .fixedSize(horizontal: false, vertical: true)
+        if editing == TurnKey(channel: turn.channel, seconds: turn.startSeconds) {
+          editor(turn)
+        } else {
+          Text(Self.highlighted(turn.text, ranges: ranges, current: current))
+            .font(Theme.Fonts.reading)
+            .lineSpacing(Theme.Fonts.readingLineSpacing)
+            .foregroundStyle(Theme.Colors.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
+            .onTapGesture(count: 2) { startEditing(turn) }
+            .contextMenu {
+              Button("Edit Text…") { startEditing(turn) }
+            }
+            .help("Double-click to fix a word — names you correct are learned")
+        }
       }
     }
     .accessibilityElement(children: .combine)
+  }
+
+  private func startEditing(_ turn: MeetingTurn) {
+    draft = turn.text
+    editing = TurnKey(channel: turn.channel, seconds: turn.startSeconds)
+  }
+
+  private func editor(_ turn: MeetingTurn) -> some View {
+    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+      TextEditor(text: $draft)
+        .font(Theme.Fonts.reading)
+        .scrollContentBackground(.hidden)
+        .frame(minHeight: 60)
+        .inset(padding: Theme.Spacing.sm)
+      HStack(spacing: Theme.Spacing.sm) {
+        Button("Save") {
+          edit(turn, draft)
+          editing = nil
+        }
+        .buttonStyle(NeuButtonStyle(prominent: true))
+        .keyboardShortcut(.return, modifiers: .command)
+        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        Button("Cancel") { editing = nil }
+          .buttonStyle(NeuButtonStyle())
+          .keyboardShortcut(.cancelAction)
+        Text("Names you fix are learned, so they're heard right next time.")
+          .font(Theme.Fonts.caption)
+          .foregroundStyle(Theme.Colors.textTertiary)
+      }
+    }
+  }
+
+  /// Each note under the last turn that started before it (the first turn
+  /// for notes before anyone spoke), keyed by turn index.
+  static func notesAfter(_ turns: [MeetingTurn], _ notes: [MeetingNote]) -> [Int: [MeetingNote]] {
+    guard !turns.isEmpty else { return [:] }
+    var placed: [Int: [MeetingNote]] = [:]
+    for note in notes.sorted(by: { $0.seconds < $1.seconds }) {
+      let index = turns.lastIndex { $0.startSeconds <= note.seconds } ?? 0
+      placed[index, default: []].append(note)
+    }
+    return placed
   }
 
   /// The turn's text with every match tinted, and the current one solid.

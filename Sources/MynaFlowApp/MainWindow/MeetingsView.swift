@@ -36,7 +36,8 @@ struct MeetingsView: View {
           },
           link: { event in Task { await recorder.link(meeting, to: event) } },
           isResummarizing: recorder.resummarizing == meeting.id,
-          resummarize: { type in Task { await recorder.resummarize(meeting, as: type) } })
+          resummarize: { type in Task { await recorder.resummarize(meeting, as: type) } },
+          editTurn: { turn, text in Task { await recorder.editTurn(turn, to: text, in: meeting) } })
         .transition(.opacity.combined(with: .offset(x: 16)))
       } else {
         listPage.transition(.opacity)
@@ -164,6 +165,7 @@ private struct RecordControl: View {
           .disabled(recorder.phase == .starting || recorder.phase == .finishing)
           .help(recorder.phase == .finishing ? "Finishing the last meeting…" : "")
       }
+      if recorder.phase == .recording { MeetingLiveNotes(recorder: recorder) }
       if let notice = recorder.notice { NoticeRow(notice: notice, recorder: recorder) }
     }
     .raised()
