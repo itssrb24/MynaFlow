@@ -10,6 +10,7 @@ import Testing
 /// whether each file still existed when handed over.
 private actor ChunkNamingTranscriber: TranscriptionProviding {
   private(set) var seen: [String] = []
+  private(set) var hintsSeen: [[String]] = []
   var failingChunkNames: Set<String> = []
   var quietChunkNames: Set<String> = []
   var punctuationChunkNames: Set<String> = []
@@ -31,6 +32,7 @@ private actor ChunkNamingTranscriber: TranscriptionProviding {
   func transcribe(audio: URL, hints: [String]) async throws -> EngineOutcome {
     let name = audio.deletingPathExtension().lastPathComponent
     seen.append(name)
+    hintsSeen.append(hints)
     #expect(FileManager.default.fileExists(atPath: audio.path))
     if let hook { await hook() }
     if failingChunkNames.contains(where: { name.hasSuffix($0) }) {
@@ -519,6 +521,31 @@ struct MeetingSessionTests {
     }
     #expect(record.segments.map(\.channel) == [.others, .you])
     #expect(record.segments.last?.text == "Yes, my update is on the free trial.")
+  }
+
+  @Test("the speech engine hears the invite's names, near-misses are fixed, hallucinations dropped")
+  func namesFromInvite() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    await transcriber.setScripted([
+      "others#0": "I asked Kokotailo about it.",
+      "others#1": "Thank you.",
+    ])
+    await transcriber.setScriptedWords([
+      "others#1": [TimedWord(text: "Thank", start: 0.1, end: 0.3), TimedWord(text: "you.", start: 19, end: 19.5)]
+    ])
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch)
+    let context = MeetingContext(
+      title: "Sync", attendees: [MeetingAttendee(name: "Daniel Kokotajlo", email: "d@x.com")])
+    try await session.start(context: context, vocabulary: ["Gemma"])
+    for _ in 0..<2 { await session.append(frame(seconds: 1), channel: .others) }
+    guard case .saved(let record) = await session.stop() else {
+      Issue.record("expected saved")
+      return
+    }
+    #expect(await transcriber.hintsSeen.first == ["Daniel Kokotajlo", "Gemma"])
+    #expect(record.segments.map(\.text) == ["I asked Kokotajlo about it."])
   }
 
   @Test("a meeting started for an invite is saved with its context")

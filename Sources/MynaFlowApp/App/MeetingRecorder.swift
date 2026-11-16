@@ -137,7 +137,11 @@ final class MeetingRecorder {
     // `.starting` can find and cancel it.
     self.session = session
     do {
-      try await session.start(context: (meeting ?? currentCalendarMeeting()).map(MeetingContext.init))
+      // The user's vocabulary joins the invite's names as engine hints.
+      let vocabulary = (try? await store.vocabularyTerms().map(\.term)) ?? []
+      try await session.start(
+        context: (meeting ?? currentCalendarMeeting()).map(MeetingContext.init),
+        vocabulary: vocabulary)
       guard phase == .starting else {
         // Cancelled while the session was opening; close what it opened.
         await session.cancel()

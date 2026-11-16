@@ -66,6 +66,9 @@ public actor MeetingSession {
   private var startedAt: Date?
   /// The invite this meeting is for, when there is one.
   private var context: MeetingContext?
+  /// What the engine listens for, and the names near-misses are fixed to.
+  private var hints: [String] = []
+  private var knownNames: [String] = []
   private var tracks: [MeetingChannel: ChannelTrack] = [:]
   private var completedChunks: [MeetingChannel: Int] = [:]
   /// Chunk files written but not yet deleted, so cancel can remove them
@@ -118,13 +121,16 @@ public actor MeetingSession {
   }
 
   /// `context` is the invite this meeting is for: title, attendees, agenda.
-  public func start(context: MeetingContext?) throws {
+  /// `vocabulary` is the user's own terms, which the engine also listens for.
+  public func start(context: MeetingContext?, vocabulary: [String] = []) throws {
     guard startedAt == nil, !stopping else { return }
     try FileManager.default.createDirectory(
       at: scratchDirectory, withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700])
     sessionID = UUID()
     self.context = context
+    hints = MeetingHints.terms(context: context, vocabulary: vocabulary)
+    knownNames = (context?.others.map(\.displayName) ?? []) + vocabulary
     cancelled = false
     writeFailure = nil
     untranscribedChunks = 0
@@ -293,7 +299,7 @@ public actor MeetingSession {
     guard isCurrent(chunk), !Task.isCancelled else { return }
     let outcome: EngineOutcome
     do {
-      outcome = try await transcriber.transcribe(audio: chunk.url, hints: [])
+      outcome = try await transcriber.transcribe(audio: chunk.url, hints: hints)
     } catch let error as SpeechEngineError where error == .nothingRecognized {
       // Room noise above the silence floor but no words: nothing was lost.
       Self.log.info(
@@ -307,7 +313,13 @@ public actor MeetingSession {
       if isCurrent(chunk) { untranscribedChunks += 1 }
       return
     }
-    let text = outcome.result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    // Words spread thinly over near-silence are the engine inventing them.
+    if SpeechSanity.isHallucination(words: outcome.result.words) {
+      Self.log.info("chunk \(chunk.channel.label, privacy: .public) at \(chunk.startSeconds)s: dropped as hallucination")
+      return
+    }
+    let text = NameCorrector.correct(
+      outcome.result.text.trimmingCharacters(in: .whitespacesAndNewlines), knownNames: knownNames)
     Self.log.info(
       "chunk \(chunk.channel.label, privacy: .public) at \(chunk.startSeconds)s → \(text.count) chars")
     // Punctuation alone (a lone ".") is engine noise, not speech.
@@ -332,7 +344,9 @@ public actor MeetingSession {
       text: text, words: outcome.result.words, duration: chunkSeconds, turns: turns)
     Self.log.info("chunk at \(chunk.startSeconds)s: \(turns.count) turns → \(pieces.count) pieces")
     for piece in pieces {
-      let pieceText = piece.text.trimmingCharacters(in: .whitespacesAndNewlines)
+      // Split pieces are rebuilt from timed words, which skip the fix above.
+      let pieceText = NameCorrector.correct(
+        piece.text.trimmingCharacters(in: .whitespacesAndNewlines), knownNames: knownNames)
       guard pieceText.contains(where: { $0.isLetter || $0.isNumber }) else { continue }
       segments.append(
         MeetingSegment(
