@@ -13,7 +13,7 @@ struct MeetingDetailView: View {
   let copy: () -> Void
   let delete: () -> Void
   /// Names (or with "", un-names) an "Others" speaker in this meeting.
-  let rename: (Int, String) -> Void
+  let naming: SpeakerNaming
   /// Calendar events near this meeting's start, for linking one after the fact.
   let linkCandidates: () -> [CalendarMeeting]
   let link: (CalendarMeeting) -> Void
@@ -31,7 +31,7 @@ struct MeetingDetailView: View {
   init(
     meeting: MeetingRecord, initialQuery: String, back: @escaping () -> Void,
     export: @escaping () -> Void, copy: @escaping () -> Void, delete: @escaping () -> Void,
-    rename: @escaping (Int, String) -> Void,
+    naming: SpeakerNaming,
     linkCandidates: @escaping () -> [CalendarMeeting] = { [] },
     link: @escaping (CalendarMeeting) -> Void = { _ in },
     isResummarizing: Bool = false,
@@ -39,7 +39,7 @@ struct MeetingDetailView: View {
   ) {
     self.isResummarizing = isResummarizing
     self.resummarize = resummarize
-    self.rename = rename
+    self.naming = naming
     self.linkCandidates = linkCandidates
     self.link = link
     self.meeting = meeting
@@ -158,7 +158,7 @@ struct MeetingDetailView: View {
       }
       .transition(.opacity)
     case .transcript:
-      TranscriptBody(meeting: meeting, find: $find, proxy: proxy, rename: rename)
+      TranscriptBody(meeting: meeting, find: $find, proxy: proxy, naming: naming)
         .transition(.opacity)
     }
   }

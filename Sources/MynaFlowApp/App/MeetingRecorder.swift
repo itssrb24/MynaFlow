@@ -284,6 +284,26 @@ final class MeetingRecorder {
 
   func refresh() async {
     meetings = (try? await store?.meetings(limit: 200)) ?? []
+    people = (try? await store?.people()) ?? []
+  }
+
+  /// Everyone met in meetings, for naming speakers.
+  private(set) var people: [Person] = []
+
+  /// "Same person": one speaker's lines become another's.
+  func mergeSpeaker(_ from: Int, into: Int, in meeting: MeetingRecord) async {
+    do {
+      try await store?.mergeSpeaker(from, into: into, meetingID: meeting.id)
+    } catch {
+      post("Could not merge the speakers: \(error.localizedDescription)", .error)
+    }
+    await refresh()
+  }
+
+  /// The previous meeting of the same series among those loaded.
+  func previousInSeries(_ meeting: MeetingRecord) -> MeetingRecord? {
+    guard let key = meeting.context?.seriesKey else { return nil }
+    return meetings.first { $0.context?.seriesKey == key && $0.startedAt < meeting.startedAt }
   }
 
   /// The meeting whose summary is being rewritten, if any.
@@ -334,7 +354,14 @@ final class MeetingRecorder {
   /// Names one "Others" speaker in one meeting; a blank name clears it.
   func renameSpeaker(_ speaker: Int, to name: String, in meeting: MeetingRecord) async {
     do {
-      try await store?.setSpeakerName(name, speaker: speaker, meetingID: meeting.id)
+      let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+      if trimmed.isEmpty {
+        try await store?.setSpeakerName("", speaker: speaker, meetingID: meeting.id)
+      } else if let store {
+        // Invitees are already people under their names; a new name becomes one.
+        let person = try await store.person(named: trimmed)
+        try await store.setSpeaker(speaker, to: person, meetingID: meeting.id)
+      }
     } catch {
       post("Could not rename the speaker: \(error.localizedDescription)", .error)
     }

@@ -113,6 +113,8 @@ struct MigrationUpgradeTests {
     #expect(meeting.speakerNames.isEmpty)
     #expect(meeting.segments.first?.speaker == nil)
     #expect(meeting.context == nil)
+    #expect(meeting.speakerPeople.isEmpty)
+    #expect(try await store.people().isEmpty)
     await store.close()
   }
 

@@ -120,7 +120,7 @@ struct TranscriptBody: View {
   let meeting: MeetingRecord
   @Binding var find: TranscriptFind
   let proxy: ScrollViewProxy
-  let rename: (Int, String) -> Void
+  let naming: SpeakerNaming
 
   private var segments: [MeetingSegment] { meeting.segments }
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -187,8 +187,7 @@ struct TranscriptBody: View {
         HStack(spacing: Theme.Spacing.sm) {
           SpeakerChip(
             label: meeting.label(channel: turn.channel, speaker: turn.speaker), tone: tone,
-            renameable: turn.speaker.map { number in { name in rename(number, name) } },
-            currentName: turn.speaker.flatMap { meeting.speakerNames[$0] })
+            speaker: turn.speaker, meeting: meeting, naming: naming)
           Text(MeetingTranscript.timestamp(turn.startSeconds))
             .font(Theme.Fonts.mono)
             .monospacedDigit()
@@ -264,14 +263,29 @@ struct SpeakerTone {
   }
 }
 
-/// Who spoke. An "Others" speaker's chip opens a small field to name them
-/// for this meeting.
+/// What naming a speaker can offer: likely names, people met before, and
+/// the actions. Built by the Meetings page for one meeting.
+struct SpeakerNaming {
+  /// Invitees not yet given to a speaker, then last time's names.
+  var suggestions: [String] = []
+  /// Everyone met in meetings, searched as you type.
+  var people: [Person] = []
+  /// Names a speaker ("" clears the name).
+  var name: (Int, String) -> Void = { _, _ in }
+  /// "Same person": the first speaker's lines become the second's.
+  var merge: (Int, Int) -> Void = { _, _ in }
+}
+
+/// Who spoke. An "Others" speaker's chip opens naming: one click on a
+/// likely name, a search over people met before, a new name, or "same
+/// person as" another speaker.
 struct SpeakerChip: View {
   let label: String
   let tone: SpeakerTone
-  /// Set for a told-apart speaker; called with the new name ("" clears it).
-  var renameable: ((String) -> Void)?
-  var currentName: String?
+  /// Set for a told-apart "Others" speaker; nil for You or plain Others.
+  var speaker: Int?
+  var meeting: MeetingRecord?
+  var naming = SpeakerNaming()
   @State private var editing = false
   @State private var draft = ""
 
@@ -284,9 +298,9 @@ struct SpeakerChip: View {
       .padding(.vertical, 2)
       .background(Capsule().fill(tone.fill))
       .overlay(Capsule().strokeBorder(Theme.Colors.hairline))
-    if let renameable {
+    if let speaker, let meeting {
       Button {
-        draft = currentName ?? ""
+        draft = ""
         editing = true
       } label: {
         chip
@@ -295,32 +309,80 @@ struct SpeakerChip: View {
       .help("Name this speaker")
       .accessibilityHint("Names this speaker for this meeting")
       .popover(isPresented: $editing, arrowEdge: .bottom) {
-        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-          Text("Name \(label)").font(Theme.Fonts.bodyStrong)
-          TextField("Name", text: $draft)
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 200)
-            .onSubmit { commit(renameable) }
-          HStack {
-            if currentName != nil {
-              Button("Clear") {
-                draft = ""
-                commit(renameable)
-              }
-            }
-            Spacer()
-            Button("Save") { commit(renameable) }.keyboardShortcut(.defaultAction)
-          }
-        }
-        .padding(Theme.Spacing.md)
+        popover(speaker: speaker, meeting: meeting)
       }
     } else {
       chip
     }
   }
 
-  private func commit(_ rename: (String) -> Void) {
-    rename(draft)
+  private func popover(speaker: Int, meeting: MeetingRecord) -> some View {
+    let current = meeting.speakerNames[speaker]
+    let matches = matchingPeople(excluding: current)
+    let others = Set(meeting.segments.compactMap(\.speaker)).subtracting([speaker]).sorted()
+    return VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+      Text("Who is \(label)?").font(Theme.Fonts.bodyStrong)
+      if !naming.suggestions.isEmpty && draft.isEmpty {
+        SectionLabel(text: "In this meeting")
+        ForEach(naming.suggestions.prefix(6), id: \.self) { name in
+          choice(name, systemImage: "person.crop.circle") { pick(name, speaker: speaker) }
+        }
+      }
+      TextField("Name", text: $draft)
+        .textFieldStyle(.roundedBorder)
+        .frame(width: 220)
+        .onSubmit { pick(draft, speaker: speaker) }
+      ForEach(matches, id: \.id) { person in
+        choice(person.name, systemImage: "person") { pick(person.name, speaker: speaker) }
+      }
+      HStack {
+        if !others.isEmpty {
+          Menu("Same person as…") {
+            ForEach(others, id: \.self) { other in
+              Button(meeting.label(channel: .others, speaker: other)) {
+                naming.merge(speaker, other)
+                editing = false
+              }
+            }
+          }
+          .menuStyle(.borderlessButton)
+          .fixedSize()
+          .help("The speaker was split in two; give these lines to the other speaker")
+        }
+        Spacer()
+        if current != nil {
+          Button("Clear") { pick("", speaker: speaker) }
+        }
+        Button("Save") { pick(draft, speaker: speaker) }
+          .keyboardShortcut(.defaultAction)
+          .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+      }
+    }
+    .padding(Theme.Spacing.md)
+    .frame(minWidth: 260)
+  }
+
+  /// People whose name contains what's typed; nothing until something is.
+  private func matchingPeople(excluding current: String?) -> [Person] {
+    let query = draft.trimmingCharacters(in: .whitespaces)
+    guard !query.isEmpty else { return [] }
+    return naming.people
+      .filter { $0.name.localizedCaseInsensitiveContains(query) && $0.name != current }
+      .prefix(5).map { $0 }
+  }
+
+  private func choice(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Label(title, systemImage: systemImage)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .padding(.vertical, 2)
+  }
+
+  private func pick(_ name: String, speaker: Int) {
+    naming.name(speaker, name)
     editing = false
   }
 }

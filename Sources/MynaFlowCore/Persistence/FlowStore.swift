@@ -743,6 +743,21 @@ public actor FlowStore {
       "ALTER TABLE meetings ADD COLUMN meeting_type TEXT",
       "ALTER TABLE meetings ADD COLUMN summary_basis TEXT",
     ],
+    // v13: people met in meetings (from invites, or named by the user), with
+    // an optional voice profile; and which person each speaker was.
+    [
+      """
+      CREATE TABLE people (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE,
+        voiceprint BLOB,
+        voiceprint_samples INTEGER NOT NULL DEFAULT 0,
+        created_at REAL NOT NULL
+      )
+      """,
+      "ALTER TABLE meetings ADD COLUMN speaker_people TEXT",
+    ],
   ]
 
   private func migrate() throws {

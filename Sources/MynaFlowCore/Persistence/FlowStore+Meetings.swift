@@ -43,6 +43,7 @@ extension FlowStore {
         bindText(statement, 14, record.meetingType?.rawValue)
         bindText(statement, 15, record.summaryBasis)
       })
+    try upsertPeople(record.context?.others ?? [])
   }
 
   /// Replaces a meeting's summary, note, type and basis ("Update summary").
@@ -106,11 +107,132 @@ extension FlowStore {
 
   private static let meetingColumns = """
     id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
-      event_title, speaker_names, context, overview, decisions, meeting_type, summary_basis
+      event_title, speaker_names, context, overview, decisions, meeting_type, summary_basis,
+      speaker_people
     """
 
+  // MARK: - People
+
+  /// Everyone met in meetings, by name.
+  public func people() throws -> [Person] {
+    try query(
+      "SELECT id, name, email FROM people ORDER BY name COLLATE NOCASE",
+      bind: { _ in },
+      row: { statement in
+        guard let id = text(statement, 0).flatMap(UUID.init(uuidString:)), let name = text(statement, 1)
+        else { throw FlowStoreError(message: "malformed person row") }
+        return Person(id: id, name: name, email: text(statement, 2))
+      })
+  }
+
+  /// Invitees become people, one per email. A name from the invite replaces
+  /// one guessed from an address; a guess never replaces a real name.
+  func upsertPeople(_ attendees: [MeetingAttendee]) throws {
+    for attendee in attendees {
+      guard let email = attendee.email else { continue }
+      try run(
+        """
+        INSERT INTO people (id, name, email, created_at) VALUES (?1, ?2, ?3, ?4)
+        ON CONFLICT(email) DO UPDATE SET name = CASE WHEN ?5 = 1 THEN excluded.name ELSE name END
+        """,
+        bind: { statement in
+          sqlite3_bind_text(statement, 1, UUID().uuidString, -1, transient)
+          sqlite3_bind_text(statement, 2, attendee.displayName, -1, transient)
+          sqlite3_bind_text(statement, 3, email, -1, transient)
+          sqlite3_bind_double(statement, 4, Date().timeIntervalSince1970)
+          sqlite3_bind_int(statement, 5, attendee.name == nil ? 0 : 1)
+        })
+    }
+  }
+
+  /// The person with this name (ignoring case), created if there is none —
+  /// for a name typed by hand rather than picked from an invite.
+  public func person(named name: String) throws -> Person {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let existing = try people().first(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+      return existing
+    }
+    let person = Person(name: trimmed, email: nil)
+    try run(
+      "INSERT INTO people (id, name, email, created_at) VALUES (?1, ?2, NULL, ?3)",
+      bind: { statement in
+        sqlite3_bind_text(statement, 1, person.id.uuidString, -1, transient)
+        sqlite3_bind_text(statement, 2, trimmed, -1, transient)
+        sqlite3_bind_double(statement, 3, Date().timeIntervalSince1970)
+      })
+    return person
+  }
+
+  /// Says a speaker was this person: names the speaker, records the link
+  /// (voice profiles enrol through it), and teaches the name to vocabulary.
+  public func setSpeaker(_ speaker: Int, to person: Person, meetingID: UUID) throws {
+    try setSpeakerName(person.name, speaker: speaker, meetingID: meetingID)
+    var links = try speakerPeople(meetingID: meetingID)
+    links[speaker] = person.id
+    try writeSpeakerPeople(links, meetingID: meetingID)
+  }
+
+  /// "Same person": every line of `from` becomes `into`'s, and `from`'s name
+  /// and person link go.
+  public func mergeSpeaker(_ from: Int, into: Int, meetingID: UUID) throws {
+    guard let meeting = try meeting(id: meetingID) else { return }
+    let segments = meeting.segments.map {
+      $0.speaker == from
+        ? MeetingSegment(channel: $0.channel, startSeconds: $0.startSeconds, text: $0.text, speaker: into)
+        : $0
+    }
+    let json = String(decoding: try JSONEncoder().encode(segments), as: UTF8.self)
+    let key = meetingID.uuidString
+    try run(
+      "UPDATE meetings SET segments = ?1 WHERE id = ?2",
+      bind: { statement in
+        sqlite3_bind_text(statement, 1, json, -1, transient)
+        sqlite3_bind_text(statement, 2, key, -1, transient)
+      })
+    try setSpeakerName("", speaker: from, meetingID: meetingID)
+    var links = meeting.speakerPeople
+    links[from] = nil
+    try writeSpeakerPeople(links, meetingID: meetingID)
+  }
+
+  func meeting(id: UUID) throws -> MeetingRecord? {
+    let key = id.uuidString
+    return try query(
+      "SELECT \(Self.meetingColumns) FROM meetings WHERE id = ?1",
+      bind: { sqlite3_bind_text($0, 1, key, -1, transient) },
+      row: Self.readMeeting
+    ).first
+  }
+
+  private func speakerPeople(meetingID: UUID) throws -> [Int: UUID] {
+    try meeting(id: meetingID)?.speakerPeople ?? [:]
+  }
+
+  private func writeSpeakerPeople(_ links: [Int: UUID], meetingID: UUID) throws {
+    let byKey = Dictionary(uniqueKeysWithValues: links.map { (String($0.key), $0.value.uuidString) })
+    let json = links.isEmpty ? nil : String(decoding: try JSONEncoder().encode(byKey), as: UTF8.self)
+    let key = meetingID.uuidString
+    try run(
+      "UPDATE meetings SET speaker_people = ?1 WHERE id = ?2",
+      bind: { statement in
+        bindText(statement, 1, json)
+        sqlite3_bind_text(statement, 2, key, -1, transient)
+      })
+  }
+
+  private static func decodePeople(_ json: String) throws -> [Int: UUID] {
+    let byKey = try JSONDecoder().decode([String: String].self, from: Data(json.utf8))
+    return Dictionary(uniqueKeysWithValues: byKey.compactMap { key, value in
+      guard let number = Int(key), let id = UUID(uuidString: value) else { return nil }
+      return (number, id)
+    })
+  }
+
   /// Names (or, with a blank name, un-names) one speaker in one meeting.
+  /// A real name also joins the vocabulary, so the engine hears it next time.
   public func setSpeakerName(_ name: String, speaker: Int, meetingID: UUID) throws {
+    let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmedName.isEmpty { try addVocabularyTerm(trimmedName, source: .promoted) }
     let key = meetingID.uuidString
     let stored = try query(
       "SELECT speaker_names FROM meetings WHERE id = ?1",
@@ -127,6 +249,9 @@ extension FlowStore {
         bindText(statement, 1, json)
         sqlite3_bind_text(statement, 2, key, -1, transient)
       })
+    // A new name means a new identity; setSpeaker re-links when it's a person.
+    var links = try speakerPeople(meetingID: meetingID)
+    if links.removeValue(forKey: speaker) != nil { try writeSpeakerPeople(links, meetingID: meetingID) }
   }
 
   // JSON object keys are strings; speaker numbers become "1", "2", ….
@@ -191,7 +316,8 @@ extension FlowStore {
         try decoder.decode(MeetingContext.self, from: Data($0.utf8))
       },
       meetingType: text(statement, 12).flatMap(MeetingType.init(rawValue:)),
-      summaryBasis: text(statement, 13))
+      summaryBasis: text(statement, 13),
+      speakerPeople: try text(statement, 14).map(decodePeople) ?? [:])
   }
 }
 

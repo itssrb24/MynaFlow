@@ -84,6 +84,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
   public let speakerNames: [Int: String]
   /// The invite the meeting was recorded for: attendees, agenda, series.
   public let context: MeetingContext?
+  /// Which person each "Others" speaker was identified as, by number.
+  public let speakerPeople: [Int: UUID]
   /// The kind of meeting the summary was written for.
   public let meetingType: MeetingType?
   /// What the summary was written from (names, type, invite); when it no
@@ -101,7 +103,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     speakerNames: [Int: String] = [:],
     context: MeetingContext? = nil,
     meetingType: MeetingType? = nil,
-    summaryBasis: String? = nil
+    summaryBasis: String? = nil,
+    speakerPeople: [Int: UUID] = [:]
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -114,6 +117,7 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     self.context = context
     self.meetingType = meetingType
     self.summaryBasis = summaryBasis
+    self.speakerPeople = speakerPeople
   }
 
   /// A fingerprint of everything the summary depends on besides the
@@ -145,7 +149,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     return MeetingRecord(
       id: id, startedAt: startedAt, durationSeconds: durationSeconds, segments: segments,
       summary: summary, summaryNote: note, eventTitle: eventTitle, speakerNames: speakerNames,
-      context: context, meetingType: type, summaryBasis: draft.currentSummaryBasis)
+      context: context, meetingType: type, summaryBasis: draft.currentSummaryBasis,
+      speakerPeople: speakerPeople)
   }
 
   /// What the summarizer needs besides the transcript.
