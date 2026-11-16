@@ -10,7 +10,7 @@ struct PermissionSnapshotTests {
     requirement: String? = DesignatedRequirementTests.selfSigned, translocated: Bool = false
   ) -> CodeIdentity {
     CodeIdentity(
-      bundlePath: path, bundleIdentifier: "com.itssrb24.MynaFlow", version: "1.1.3", build: "113",
+      bundlePath: path, bundleIdentifier: "app.mynaflow.MynaFlow", version: "1.1.3", build: "113",
       signature: signature, authority: signature == .certificate ? ["Myna Flow"] : [],
       designatedRequirement: requirement, cdhash: "abcdef0123456789",
       isTranslocated: translocated)

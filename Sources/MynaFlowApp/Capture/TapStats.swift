@@ -13,7 +13,7 @@ final class TapStats: Sendable {
     var firstLayout = ""
   }
 
-  private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "audio")
+  private static let log = Logger(subsystem: "app.mynaflow.MynaFlow", category: "audio")
   private let counts = OSAllocatedUnfairLock(initialState: Counts())
 
   func noteCallback(layout: @autoclosure () -> [(UInt32, UInt32)]) {

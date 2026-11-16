@@ -8,7 +8,7 @@ import os
 /// Nothing else in the app starts or stops capture.
 @MainActor
 final class DictationSession {
-  nonisolated private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "session")
+  nonisolated private static let log = Logger(subsystem: "app.mynaflow.MynaFlow", category: "session")
 
   private var policy = DictationSessionPolicy()
   private let capture: MicrophoneCapture

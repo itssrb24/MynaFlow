@@ -30,7 +30,7 @@ struct MeetingNotice: Equatable {
 @MainActor
 @Observable
 final class MeetingRecorder {
-  nonisolated private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "meeting")
+  nonisolated private static let log = Logger(subsystem: "app.mynaflow.MynaFlow", category: "meeting")
   /// When to check that other people's audio is arriving at all.
   private static let silenceCheckSeconds = 60
   private static let restartDebounce: Duration = .milliseconds(600)

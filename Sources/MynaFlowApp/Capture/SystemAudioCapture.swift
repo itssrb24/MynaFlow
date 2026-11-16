@@ -29,7 +29,7 @@ enum SystemAudioCaptureError: Error, LocalizedError {
 /// aggregate device and the tap, in that order, on every stop.
 @MainActor
 final class SystemAudioCapture {
-  private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "audio")
+  private static let log = Logger(subsystem: "app.mynaflow.MynaFlow", category: "audio")
 
   private var tapID = AudioObjectID(kAudioObjectUnknown)
   private var aggregateID = AudioObjectID(kAudioObjectUnknown)
@@ -41,7 +41,7 @@ final class SystemAudioCapture {
   /// AirPods connecting, say. The tap's aggregate is built on the old device,
   /// so the owner restarts capture to keep hearing the call.
   var onOutputDeviceChange: @MainActor () -> Void = {}
-  private let queue = DispatchQueue(label: "com.itssrb24.MynaFlow.system-audio", qos: .userInitiated)
+  private let queue = DispatchQueue(label: "app.mynaflow.MynaFlow.system-audio", qos: .userInitiated)
 
   var isRunning: Bool { procID != nil }
 
@@ -69,7 +69,7 @@ final class SystemAudioCapture {
     let outputUID = try Self.defaultOutputDeviceUID()
     let aggregate: [String: Any] = [
       kAudioAggregateDeviceNameKey: "Myna Flow Meeting",
-      kAudioAggregateDeviceUIDKey: "com.itssrb24.MynaFlow.meeting.\(UUID().uuidString)",
+      kAudioAggregateDeviceUIDKey: "app.mynaflow.MynaFlow.meeting.\(UUID().uuidString)",
       kAudioAggregateDeviceMainSubDeviceKey: outputUID,
       kAudioAggregateDeviceIsPrivateKey: true,
       kAudioAggregateDeviceIsStackedKey: false,

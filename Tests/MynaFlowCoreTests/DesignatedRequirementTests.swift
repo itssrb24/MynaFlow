@@ -6,15 +6,15 @@ import Testing
 struct DesignatedRequirementTests {
   // Captured from real bundles on the development Mac.
   static let apple =
-    #"identifier "com.itssrb24.MynaFlow" and anchor apple generic and certificate leaf[subject.CN] = "Apple Development: someone@example.com (AULMDWGH97)" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */"#
+    #"identifier "app.mynaflow.MynaFlow" and anchor apple generic and certificate leaf[subject.CN] = "Apple Development: someone@example.com (AULMDWGH97)" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */"#
   static let selfSigned =
-    #"identifier "com.itssrb24.MynaFlow" and certificate root = H"187482b7d4a30d1111a1976b369c82235409d0cd""#
-  static let adHoc = #"identifier "com.itssrb24.MynaFlow" and cdhash H"06f6f250450af9297595001820e8cf60f5f69da7""#
+    #"identifier "app.mynaflow.MynaFlow" and certificate root = H"187482b7d4a30d1111a1976b369c82235409d0cd""#
+  static let adHoc = #"identifier "app.mynaflow.MynaFlow" and cdhash H"06f6f250450af9297595001820e8cf60f5f69da7""#
 
   @Test("Self-signed parses to its root hash")
   func selfSignedParses() {
     let dr = DesignatedRequirement.parse(Self.selfSigned)
-    #expect(dr.identifier == "com.itssrb24.MynaFlow")
+    #expect(dr.identifier == "app.mynaflow.MynaFlow")
     #expect(dr.anchor == .certificateRoot(sha1: "187482b7d4a30d1111a1976b369c82235409d0cd"))
     #expect(dr.summary == "self-signed 187482b7")
   }
@@ -59,7 +59,7 @@ struct DesignatedRequirementTests {
     // Settings; a different key, a different root, a different app.
     let mine = DesignatedRequirement.parse(Self.selfSigned)
     let theirs = DesignatedRequirement.parse(
-      #"identifier "com.itssrb24.MynaFlow" and certificate root = H"0000000000000000000000000000000000000000""#)
+      #"identifier "app.mynaflow.MynaFlow" and certificate root = H"0000000000000000000000000000000000000000""#)
     #expect(!mine.sameIdentity(as: theirs))
   }
 

@@ -23,7 +23,7 @@ struct CalendarOption: Identifiable, Equatable {
 @MainActor
 @Observable
 final class CalendarSource {
-  private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "calendar")
+  private static let log = Logger(subsystem: "app.mynaflow.MynaFlow", category: "calendar")
   private static let lookBehind: TimeInterval = 10 * 60
   private static let lookAhead: TimeInterval = 12 * 60 * 60
   private static let refreshInterval: Duration = .seconds(300)

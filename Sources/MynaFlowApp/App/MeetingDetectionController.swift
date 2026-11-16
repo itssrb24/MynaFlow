@@ -10,7 +10,7 @@ import os
 @MainActor
 @Observable
 final class MeetingDetectionController {
-  private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "meeting")
+  private static let log = Logger(subsystem: "app.mynaflow.MynaFlow", category: "meeting")
   private static let tick: Duration = .seconds(2)
   private static let promptSeconds = 60
   private static let callsKey = "meeting_detect_calls"

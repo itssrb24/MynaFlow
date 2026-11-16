@@ -2,7 +2,7 @@
 # Shared by install.sh and test-fresh-install.sh. Source it; do not run it.
 
 CERT_NAME="Myna Flow"
-BUNDLE_ID="com.itssrb24.MynaFlow"
+BUNDLE_ID="app.mynaflow.MynaFlow"
 
 existing_identity() {
   security find-identity -v -p codesigning 2>/dev/null \

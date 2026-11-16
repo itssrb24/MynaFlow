@@ -3,6 +3,24 @@
 All notable changes to Myna Flow. Versions follow the app's
 `CFBundleShortVersionString`.
 
+## Unreleased
+
+### Changes
+- **New app ID: `app.mynaflow.MynaFlow`** (was `com.itssrb24.MynaFlow`), and the
+  copyright now reads "Myna Flow contributors". **After updating, grant
+  Accessibility and Input Monitoring once more**: in System Settings ▸ Privacy &
+  Security, remove the old Myna Flow entry with **−**, then add the app with
+  **+**. History, meetings and settings carry over.
+- **Polish every dictation** (Styles page, off by default): pick a style and
+  each dictation is rewritten by the local model before it's typed. If the
+  model is missing or fails, the cleaned text is typed instead.
+- **Style shortcuts are recorded on the style** (Styles and Hotkeys pages); no
+  more numbered slots.
+
+### Fixes
+- Switching the speech engine or editing vocabulary no longer resets the
+  terminal-period and paste-when-unseen settings until relaunch.
+
 ## 1.2.1
 
 ### Fixes

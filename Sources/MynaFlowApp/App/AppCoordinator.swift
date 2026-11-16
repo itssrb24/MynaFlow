@@ -8,7 +8,7 @@ import os
 @MainActor
 @Observable
 final class AppCoordinator {
-  nonisolated private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "app")
+  nonisolated private static let log = Logger(subsystem: "app.mynaflow.MynaFlow", category: "app")
 
   let indicator = IndicatorModel()
   /// Meeting notes: explicit start/stop, its own indicator and capture.
@@ -523,7 +523,7 @@ final class AppCoordinator {
   }
 
   func refreshInstalledCopies() {
-    let bundleID = Bundle.main.bundleIdentifier ?? "com.itssrb24.MynaFlow"
+    let bundleID = Bundle.main.bundleIdentifier ?? "app.mynaflow.MynaFlow"
     otherCopies = InstalledCopies.find(bundleID: bundleID, excluding: Bundle.main.bundleURL)
   }
 

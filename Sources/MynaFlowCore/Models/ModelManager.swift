@@ -71,7 +71,7 @@ public enum DefaultModelCatalog {
 /// Downloads, verifies, and removes catalog models. Ported from Myna minus
 /// the meeting-recording suspension machinery Flow has no use for.
 public actor LocalModelManager {
-  private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "models")
+  private static let log = Logger(subsystem: "app.mynaflow.MynaFlow", category: "models")
 
   private let modelsDirectory: URL
   private let verifier: ModelFileVerifier

@@ -492,7 +492,7 @@ public actor LlamaServerHost {
 /// Logging shim keeping the port line-for-line comparable with Myna's file.
 enum MynaLog {
   private static let logger = Logger(
-    subsystem: "com.itssrb24.MynaFlow", category: "llm")
+    subsystem: "app.mynaflow.MynaFlow", category: "llm")
 
   // Redacted once here, so the unified log and the exportable file carry the
   // same safe string. `privacy: .public` opts out of os_log's own redaction.

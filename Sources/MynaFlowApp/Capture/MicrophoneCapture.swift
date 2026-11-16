@@ -15,7 +15,7 @@ enum MicrophoneCaptureError: Error, LocalizedError {
 
 @MainActor
 final class MicrophoneCapture {
-  private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "audio")
+  private static let log = Logger(subsystem: "app.mynaflow.MynaFlow", category: "audio")
 
   private let engine = AVAudioEngine()
   private var continuation: AsyncStream<AudioFrame>.Continuation?

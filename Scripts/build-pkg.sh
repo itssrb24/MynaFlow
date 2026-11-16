@@ -9,7 +9,7 @@ VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "dist/M
 pkgbuild \
   --component "dist/Myna Flow.app" \
   --install-location /Applications \
-  --identifier com.itssrb24.MynaFlow.pkg \
+  --identifier app.mynaflow.MynaFlow.pkg \
   --version "$VERSION" \
   "dist/MynaFlow-$VERSION.pkg"
 echo "Built dist/MynaFlow-$VERSION.pkg"

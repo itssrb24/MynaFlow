@@ -28,7 +28,7 @@ struct MicSharingTests {
 
   @Test("Myna Flow's own use of the mic doesn't count")
   func selfIgnored() {
-    let processes = [AudioProcessSnapshot(pid: 100, bundleID: "com.itssrb24.MynaFlow", isRunningInput: true)]
+    let processes = [AudioProcessSnapshot(pid: 100, bundleID: "app.mynaflow.MynaFlow", isRunningInput: true)]
     #expect(MicSharing.voiceProcessingIsSafe(processes, excludingPID: me))
   }
 }

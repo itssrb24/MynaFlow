@@ -50,7 +50,7 @@ public actor MeetingSession {
   /// About -50 dBFS: below anything a voice on a call produces.
   static let silenceFloor: Float = 0.003
   /// Chunk lifecycle only — channel, length, level, outcome. Never text.
-  private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "meeting")
+  private static let log = Logger(subsystem: "app.mynaflow.MynaFlow", category: "meeting")
 
   private let transcriber: any TranscriptionProviding
   private let summarizer: MeetingSummarizer

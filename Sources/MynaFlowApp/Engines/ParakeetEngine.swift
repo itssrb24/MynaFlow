@@ -14,7 +14,7 @@ import os
 /// purge-and-retry recovery.
 actor ParakeetEngine: SpeechEngine, TranscriptionProviding {
   nonisolated let id: EngineID = .parakeet
-  private static let log = Logger(subsystem: "com.itssrb24.MynaFlow", category: "parakeet")
+  private static let log = Logger(subsystem: "app.mynaflow.MynaFlow", category: "parakeet")
 
   /// Rough size of the int8 offline bundle set, for consent copy.
   static let approximateDownloadMegabytes = 600

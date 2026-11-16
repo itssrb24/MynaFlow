@@ -152,7 +152,7 @@ read Accessibility off and Input Monitoring denied. Quitting and reopening chang
 nothing. Removing the row and adding the app back *while it was running* changed
 nothing either — macOS re-created the old row from the running copy's identity
 before the new one could take. What recovered it: quit the app, remove the row
-(`tccutil reset ListenEvent com.itssrb24.MynaFlow` does the same as **–**), relaunch;
+(`tccutil reset ListenEvent app.mynaflow.MynaFlow` does the same as **–**), relaunch;
 the app was granted on the spot, from the approval given minutes earlier — and the
 pane showed **no row at all** while the app read granted. The pane is not the
 truth; `--print-permissions` is. That is the entire "granted but not granted" complaint,
