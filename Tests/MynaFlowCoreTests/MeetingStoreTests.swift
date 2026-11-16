@@ -27,6 +27,46 @@ private func makeMeeting(
 
 @Suite("Meeting persistence")
 struct MeetingStoreTests {
+  @Test("speakers on segments and names given later both survive a reload")
+  func speakerNamesRoundTrip() async throws {
+    let store = try await FlowStore.open(at: temporaryDatabaseURL())
+    let meeting = MeetingRecord(
+      startedAt: Date(timeIntervalSince1970: 1_800_000_000), durationSeconds: 40,
+      segments: [
+        MeetingSegment(channel: .others, startSeconds: 0, text: "Any updates?", speaker: 1),
+        MeetingSegment(channel: .others, startSeconds: 5, text: "Yes.", speaker: 2),
+      ],
+      summary: nil, summaryNote: "n")
+    try await store.insertMeeting(meeting)
+    try await store.setSpeakerName("Maurice", speaker: 2, meetingID: meeting.id)
+    try await store.setSpeakerName("  ", speaker: 1, meetingID: meeting.id)
+
+    let loaded = try #require(try await store.meetings(limit: 1).first)
+    #expect(loaded.segments.map(\.speaker) == [1, 2])
+    #expect(loaded.speakerNames == [2: "Maurice"])
+    await store.close()
+  }
+
+  @Test("export and labels use a speaker's name, else Speaker N, else Others")
+  func labelsUseNames() {
+    let meeting = MeetingRecord(
+      startedAt: Date(timeIntervalSince1970: 1_800_000_000), durationSeconds: 40,
+      segments: [
+        MeetingSegment(channel: .you, startSeconds: 0, text: "Hi."),
+        MeetingSegment(channel: .others, startSeconds: 1, text: "Hello.", speaker: 1),
+        MeetingSegment(channel: .others, startSeconds: 2, text: "Hey.", speaker: 2),
+        MeetingSegment(channel: .others, startSeconds: 3, text: "Old.", speaker: nil),
+      ],
+      summary: nil, summaryNote: "n", speakerNames: [2: "Maurice"])
+    #expect(meeting.label(channel: .you, speaker: nil) == "You")
+    #expect(meeting.label(channel: .others, speaker: 1) == "Speaker 1")
+    #expect(meeting.label(channel: .others, speaker: 2) == "Maurice")
+    #expect(meeting.label(channel: .others, speaker: nil) == "Others")
+    let markdown = MeetingExporter.markdown(meeting)
+    #expect(markdown.contains("[00:02] Maurice: Hey."))
+    #expect(markdown.contains("[00:01] Speaker 1: Hello."))
+  }
+
   @Test("a meeting round-trips with transcript and summary")
   func roundTrip() async throws {
     let store = try await FlowStore.open(at: temporaryDatabaseURL())

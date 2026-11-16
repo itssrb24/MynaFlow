@@ -40,6 +40,17 @@ struct MeetingTurnsTests {
     #expect(turns.first?.text == "One. Two.")
   }
 
+  @Test("two speakers in Others are two turns, and each keeps its number")
+  func speakersSplitTurns() {
+    let turns = MeetingTranscript.turns([
+      MeetingSegment(channel: .others, startSeconds: 0, text: "Any updates?", speaker: 1),
+      MeetingSegment(channel: .others, startSeconds: 2, text: "Yes, one.", speaker: 2),
+      MeetingSegment(channel: .others, startSeconds: 4, text: "Go on.", speaker: 2),
+    ])
+    #expect(turns.map(\.speaker) == [1, 2])
+    #expect(turns.last?.text == "Yes, one. Go on.")
+  }
+
   @Test("no segments, no turns")
   func empty() {
     #expect(MeetingTranscript.turns([]).isEmpty)

@@ -53,6 +53,9 @@ public actor MeetingSession {
   private static let log = Logger(subsystem: "app.mynaflow.MynaFlow", category: "meeting")
 
   private let transcriber: any TranscriptionProviding
+  /// Splits "Others" into speakers; nil keeps "Others" as one voice.
+  private let diarizer: (any SpeakerDiarizing)?
+  private var speakerNumbers = SpeakerNumbering()
   private let summarizer: MeetingSummarizer
   private let store: any MeetingStoring
   private let scratchDirectory: URL
@@ -88,10 +91,12 @@ public actor MeetingSession {
     summarizer: MeetingSummarizer,
     store: any MeetingStoring,
     scratchDirectory: URL,
+    diarizer: (any SpeakerDiarizing)? = nil,
     chunkSeconds: Double = 30,
     now: @escaping @Sendable () -> Date = { Date() }
   ) {
     self.transcriber = transcriber
+    self.diarizer = diarizer
     self.summarizer = summarizer
     self.store = store
     self.scratchDirectory = scratchDirectory
@@ -118,6 +123,7 @@ public actor MeetingSession {
     writeFailure = nil
     untranscribedChunks = 0
     segments = []
+    speakerNumbers = SpeakerNumbering()
     completedChunks = [:]
     do {
       for channel in MeetingChannel.allCases {
@@ -299,8 +305,33 @@ public actor MeetingSession {
       "chunk \(chunk.channel.label, privacy: .public) at \(chunk.startSeconds)s → \(text.count) chars")
     // Punctuation alone (a lone ".") is engine noise, not speech.
     guard isCurrent(chunk), text.contains(where: { $0.isLetter || $0.isNumber }) else { return }
-    segments.append(
-      MeetingSegment(channel: chunk.channel, startSeconds: chunk.startSeconds, text: text))
+    guard chunk.channel == .others, let diarizer else {
+      segments.append(
+        MeetingSegment(channel: chunk.channel, startSeconds: chunk.startSeconds, text: text))
+      return
+    }
+    // The chunk file still exists here; the deferred delete runs after.
+    let turns: [SpeakerTurn]
+    do {
+      turns = try await diarizer.diarize(audio: chunk.url)
+    } catch {
+      // Speakers are a nicety: the text is kept, as plain "Others".
+      Self.log.error(
+        "chunk at \(chunk.startSeconds)s not diarized: \(String(describing: type(of: error)), privacy: .public)")
+      turns = []
+    }
+    guard isCurrent(chunk) else { return }
+    let pieces = SpeakerAlignment.pieces(
+      text: text, words: outcome.result.words, duration: chunkSeconds, turns: turns)
+    Self.log.info("chunk at \(chunk.startSeconds)s: \(turns.count) turns → \(pieces.count) pieces")
+    for piece in pieces {
+      let pieceText = piece.text.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard pieceText.contains(where: { $0.isLetter || $0.isNumber }) else { continue }
+      segments.append(
+        MeetingSegment(
+          channel: .others, startSeconds: chunk.startSeconds + piece.start, text: pieceText,
+          speaker: piece.speaker.map { speakerNumbers.number(for: $0) }))
+    }
   }
 
   /// Whether a chunk's result still belongs to a live meeting.

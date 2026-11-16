@@ -16,12 +16,15 @@ private actor ChunkNamingTranscriber: TranscriptionProviding {
   var hook: (@Sendable () async -> Void)?
   /// Text to return for a chunk label ("you#0"), instead of the label.
   var scripted: [String: String] = [:]
+  /// Word timings to return for a chunk label.
+  var scriptedWords: [String: [TimedWord]] = [:]
 
   func setFailing(_ names: Set<String>) { failingChunkNames = names }
   func setQuiet(_ names: Set<String>) { quietChunkNames = names }
   func setPunctuationOnly(_ names: Set<String>) { punctuationChunkNames = names }
   func setHook(_ hook: @escaping @Sendable () async -> Void) { self.hook = hook }
   func setScripted(_ texts: [String: String]) { scripted = texts }
+  func setScriptedWords(_ words: [String: [TimedWord]]) { scriptedWords = words }
 
   func prewarm() async {}
 
@@ -45,7 +48,8 @@ private actor ChunkNamingTranscriber: TranscriptionProviding {
     let parts = name.split(separator: "-")
     let label = "\(parts[parts.count - 2])#\(parts[parts.count - 1])"
     return EngineOutcome(
-      result: TranscriptionResult(text: scripted[label] ?? label, durationSeconds: 1),
+      result: TranscriptionResult(
+        text: scripted[label] ?? label, durationSeconds: 1, words: scriptedWords[label]),
       engineUsed: .parakeet, fallbackOccurred: false)
   }
 }
@@ -108,17 +112,39 @@ private func audioFiles(in directory: URL) -> [String] {
     .filter { $0.hasSuffix(".wav") }
 }
 
+/// Answers each chunk with scripted turns, keyed by the chunk's label
+/// ("others#0"); records which chunks it was asked about.
+private actor FakeDiarizer: SpeakerDiarizing {
+  private(set) var asked: [String] = []
+  var turns: [String: [SpeakerTurn]] = [:]
+  var failing = false
+
+  func setTurns(_ turns: [String: [SpeakerTurn]]) { self.turns = turns }
+  func setFailing(_ failing: Bool) { self.failing = failing }
+
+  func diarize(audio: URL) async throws -> [SpeakerTurn] {
+    let parts = audio.deletingPathExtension().lastPathComponent.split(separator: "-")
+    let label = "\(parts[parts.count - 2])#\(parts[parts.count - 1])"
+    asked.append(label)
+    #expect(FileManager.default.fileExists(atPath: audio.path))
+    if failing { throw SpeechEngineError("diarizer crashed") }
+    return turns[label] ?? []
+  }
+}
+
 private func makeSession(
   transcriber: ChunkNamingTranscriber,
   store: FakeMeetingStore,
   scratch: URL,
-  model: (any LocalLanguageModel)? = nil
+  model: (any LocalLanguageModel)? = nil,
+  diarizer: (any SpeakerDiarizing)? = nil
 ) -> MeetingSession {
   MeetingSession(
     transcriber: transcriber,
     summarizer: MeetingSummarizer(model: model),
     store: store,
     scratchDirectory: scratch,
+    diarizer: diarizer,
     chunkSeconds: 1,
     now: { Date(timeIntervalSince1970: 1_800_000_000) })
 }
@@ -493,6 +519,83 @@ struct MeetingSessionTests {
     }
     #expect(record.segments.map(\.channel) == [.others, .you])
     #expect(record.segments.last?.text == "Yes, my update is on the free trial.")
+  }
+
+  @Test("an Others chunk is split between the speakers heard in it, numbered by first appearance")
+  func othersSplitBySpeaker() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    await transcriber.setScripted(["others#0": "Any updates? Yes, the launch moved."])
+    await transcriber.setScriptedWords([
+      "others#0": [
+        TimedWord(text: "Any", start: 0, end: 0.5), TimedWord(text: "updates?", start: 0.5, end: 1.2),
+        TimedWord(text: "Yes,", start: 1.5, end: 1.9), TimedWord(text: "the", start: 1.9, end: 2.1),
+        TimedWord(text: "launch", start: 2.1, end: 2.6), TimedWord(text: "moved.", start: 2.6, end: 3.0),
+      ]
+    ])
+    let diarizer = FakeDiarizer()
+    await diarizer.setTurns([
+      "others#0": [
+        SpeakerTurn(speaker: "spk_9", start: 0, end: 1.3), SpeakerTurn(speaker: "spk_4", start: 1.4, end: 3.2),
+      ]
+    ])
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch, diarizer: diarizer)
+
+    try await session.start()
+    await session.append(frame(seconds: 1), channel: .others)
+    guard case .saved(let record) = await session.stop() else {
+      Issue.record("expected saved")
+      return
+    }
+    #expect(record.segments.map(\.text) == ["Any updates?", "Yes, the launch moved."])
+    #expect(record.segments.map(\.speaker) == [1, 2])
+    #expect(record.segments.map(\.startSeconds) == [0, 1.5])
+    #expect(audioFiles(in: scratch).isEmpty)
+  }
+
+  @Test("your mic is never diarized, and a speaker keeps one number across chunks")
+  func youNotDiarizedAndStableNumbers() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    let diarizer = FakeDiarizer()
+    await diarizer.setTurns([
+      "others#0": [SpeakerTurn(speaker: "spk_4", start: 0, end: 1)],
+      "others#1": [SpeakerTurn(speaker: "spk_4", start: 0, end: 1)],
+    ])
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch, diarizer: diarizer)
+
+    try await session.start()
+    for _ in 0..<2 { await session.append(frame(seconds: 1), channel: .others) }
+    await session.append(frame(seconds: 1), channel: .you)
+    guard case .saved(let record) = await session.stop() else {
+      Issue.record("expected saved")
+      return
+    }
+    #expect(await diarizer.asked.sorted() == ["others#0", "others#1"])
+    #expect(record.segments.filter { $0.channel == .others }.map(\.speaker) == [1, 1])
+    #expect(record.segments.first { $0.channel == .you }?.speaker == nil)
+  }
+
+  @Test("a diarizer failure keeps the text, unlabelled, and still deletes the audio")
+  func diarizerFailureKeepsText() async throws {
+    let scratch = try makeScratch()
+    let diarizer = FakeDiarizer()
+    await diarizer.setFailing(true)
+    let store = FakeMeetingStore()
+    let session = makeSession(
+      transcriber: ChunkNamingTranscriber(), store: store, scratch: scratch, diarizer: diarizer)
+
+    try await session.start()
+    await session.append(frame(seconds: 1), channel: .others)
+    guard case .saved(let record) = await session.stop() else {
+      Issue.record("expected saved")
+      return
+    }
+    #expect(record.segments.map(\.text) == ["others#0"])
+    #expect(record.segments.first?.speaker == nil)
+    #expect(audioFiles(in: scratch).isEmpty)
   }
 
   @Test("without a model the transcript is saved with no summary and a note saying so")

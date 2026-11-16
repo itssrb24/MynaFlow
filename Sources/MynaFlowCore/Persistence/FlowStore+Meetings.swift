@@ -13,12 +13,13 @@ extension FlowStore {
     let actionItems = try record.summary.map {
       String(decoding: try encoder.encode($0.actionItems), as: UTF8.self)
     }
+    let names = record.speakerNames.isEmpty ? nil : try Self.encodeNames(record.speakerNames)
     try run(
       """
       INSERT INTO meetings (
         id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
-        event_title
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        event_title, speaker_names
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
       """,
       bind: { statement in
         sqlite3_bind_text(statement, 1, record.id.uuidString, -1, transient)
@@ -29,7 +30,41 @@ extension FlowStore {
         bindText(statement, 6, actionItems)
         bindText(statement, 7, record.summaryNote)
         bindText(statement, 8, record.eventTitle)
+        bindText(statement, 9, names)
       })
+  }
+
+  /// Names (or, with a blank name, un-names) one speaker in one meeting.
+  public func setSpeakerName(_ name: String, speaker: Int, meetingID: UUID) throws {
+    let key = meetingID.uuidString
+    let stored = try query(
+      "SELECT speaker_names FROM meetings WHERE id = ?1",
+      bind: { sqlite3_bind_text($0, 1, key, -1, transient) },
+      row: { text($0, 0) }
+    ).first ?? nil
+    var names = try stored.map(Self.decodeNames) ?? [:]
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    names[speaker] = trimmed.isEmpty ? nil : trimmed
+    let json = names.isEmpty ? nil : try Self.encodeNames(names)
+    try run(
+      "UPDATE meetings SET speaker_names = ?1 WHERE id = ?2",
+      bind: { statement in
+        bindText(statement, 1, json)
+        sqlite3_bind_text(statement, 2, key, -1, transient)
+      })
+  }
+
+  // JSON object keys are strings; speaker numbers become "1", "2", ….
+  private static func encodeNames(_ names: [Int: String]) throws -> String {
+    let byKey = Dictionary(uniqueKeysWithValues: names.map { (String($0.key), $0.value) })
+    return String(decoding: try JSONEncoder().encode(byKey), as: UTF8.self)
+  }
+
+  private static func decodeNames(_ json: String) throws -> [Int: String] {
+    let byKey = try JSONDecoder().decode([String: String].self, from: Data(json.utf8))
+    return Dictionary(uniqueKeysWithValues: byKey.compactMap { key, value in
+      Int(key).map { ($0, value) }
+    })
   }
 
   /// Newest first.
@@ -37,7 +72,7 @@ extension FlowStore {
     try query(
       """
       SELECT id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
-        event_title
+        event_title, speaker_names
       FROM meetings ORDER BY started_at DESC LIMIT ?1
       """,
       bind: { sqlite3_bind_int($0, 1, Int32(limit)) },
@@ -72,7 +107,8 @@ extension FlowStore {
       segments: segments,
       summary: summary,
       summaryNote: text(statement, 6),
-      eventTitle: text(statement, 7))
+      eventTitle: text(statement, 7),
+      speakerNames: try text(statement, 8).map(decodeNames) ?? [:])
   }
 }
 

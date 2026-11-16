@@ -93,6 +93,28 @@ struct MigrationUpgradeTests {
     await store.close()
   }
 
+  @Test("A v9 database with a meeting upgrades: no speaker names, segments without speakers")
+  func upgradesMeetingsFromV9() async throws {
+    let url = try makeLegacyDatabase(version: 9)
+    var handle: OpaquePointer?
+    #expect(sqlite3_open_v2(url.path, &handle, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK)
+    let insert = """
+      INSERT INTO meetings (id, started_at, duration_seconds, segments, event_title)
+      VALUES ('\(UUID().uuidString)', 1800000000, 60,
+        '[{"channel":"others","startSeconds":0,"text":"Hi"}]', 'Standup')
+      """
+    #expect(sqlite3_exec(handle, insert, nil, nil, nil) == SQLITE_OK)
+    sqlite3_close_v2(handle)
+
+    let store = try await FlowStore.open(at: url)
+    #expect(await store.schemaVersion() == FlowStore.migrations.count)
+    let meeting = try #require(try await store.meetings(limit: 10).first)
+    #expect(meeting.eventTitle == "Standup")
+    #expect(meeting.speakerNames.isEmpty)
+    #expect(meeting.segments.first?.speaker == nil)
+    await store.close()
+  }
+
   @Test("Opening an already-current database changes nothing")
   func idempotentOnCurrent() async throws {
     let url = try makeLegacyDatabase(version: FlowStore.migrations.count)

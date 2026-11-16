@@ -29,11 +29,16 @@ public struct MeetingSegment: Codable, Equatable, Sendable {
   public let channel: MeetingChannel
   public let startSeconds: Double
   public let text: String
+  /// Which voice in "Others" said this — 1, 2, … in order of first
+  /// appearance. Nil for "You", for meetings before speaker separation, and
+  /// when no speaker could be told apart. Old saved segments decode as nil.
+  public let speaker: Int?
 
-  public init(channel: MeetingChannel, startSeconds: Double, text: String) {
+  public init(channel: MeetingChannel, startSeconds: Double, text: String, speaker: Int? = nil) {
     self.channel = channel
     self.startSeconds = startSeconds
     self.text = text
+    self.speaker = speaker
   }
 }
 
@@ -58,6 +63,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
   public let summaryNote: String?
   /// The calendar event the meeting was started for, when it was.
   public let eventTitle: String?
+  /// Names the user gave "Others" speakers in this meeting, by number.
+  public let speakerNames: [Int: String]
 
   public init(
     id: UUID = UUID(),
@@ -66,7 +73,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     segments: [MeetingSegment],
     summary: MeetingSummary?,
     summaryNote: String?,
-    eventTitle: String? = nil
+    eventTitle: String? = nil,
+    speakerNames: [Int: String] = [:]
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -75,13 +83,19 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     self.summary = summary
     self.summaryNote = summaryNote
     self.eventTitle = eventTitle
+    self.speakerNames = speakerNames
+  }
+
+  /// "You", a speaker's given name, "Speaker N", or "Others".
+  public func label(channel: MeetingChannel, speaker: Int?) -> String {
+    MeetingTranscript.label(channel: channel, speaker: speaker, names: speakerNames)
   }
 
   public var title: String {
     (eventTitle ?? "Meeting") + " — " + startedAt.formatted(date: .abbreviated, time: .shortened)
   }
 
-  public var transcriptText: String { MeetingTranscript.render(segments) }
+  public var transcriptText: String { MeetingTranscript.render(segments, names: speakerNames) }
 }
 
 /// One speaker's uninterrupted stretch: consecutive chunks of a channel read
@@ -90,11 +104,14 @@ public struct MeetingTurn: Equatable, Sendable {
   public let channel: MeetingChannel
   public let startSeconds: Double
   public let text: String
+  /// The "Others" speaker number, when speakers were told apart.
+  public let speaker: Int?
 
-  public init(channel: MeetingChannel, startSeconds: Double, text: String) {
+  public init(channel: MeetingChannel, startSeconds: Double, text: String, speaker: Int? = nil) {
     self.channel = channel
     self.startSeconds = startSeconds
     self.text = text
+    self.speaker = speaker
   }
 }
 
@@ -105,11 +122,15 @@ public enum MeetingTranscript {
     merge(segments).reduce(into: [MeetingTurn]()) { turns, segment in
       let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !text.isEmpty else { return }
-      if let last = turns.last, last.channel == segment.channel {
+      if let last = turns.last, last.channel == segment.channel, last.speaker == segment.speaker {
         turns[turns.count - 1] = MeetingTurn(
-          channel: last.channel, startSeconds: last.startSeconds, text: last.text + " " + text)
+          channel: last.channel, startSeconds: last.startSeconds, text: last.text + " " + text,
+          speaker: last.speaker)
       } else {
-        turns.append(MeetingTurn(channel: segment.channel, startSeconds: segment.startSeconds, text: text))
+        turns.append(
+          MeetingTurn(
+            channel: segment.channel, startSeconds: segment.startSeconds, text: text,
+            speaker: segment.speaker))
       }
     }
   }
@@ -125,12 +146,20 @@ public enum MeetingTranscript {
     }.map(\.element)
   }
 
-  public static func render(_ segments: [MeetingSegment]) -> String {
-    segments.map(line).joined(separator: "\n")
+  public static func render(_ segments: [MeetingSegment], names: [Int: String] = [:]) -> String {
+    segments.map { line($0, names: names) }.joined(separator: "\n")
   }
 
-  static func line(_ segment: MeetingSegment) -> String {
-    "[\(timestamp(segment.startSeconds))] \(segment.channel.label): \(segment.text)"
+  static func line(_ segment: MeetingSegment, names: [Int: String] = [:]) -> String {
+    let who = label(channel: segment.channel, speaker: segment.speaker, names: names)
+    return "[\(timestamp(segment.startSeconds))] \(who): \(segment.text)"
+  }
+
+  /// "You", a speaker's given name, "Speaker N", or "Others" for a voice
+  /// that wasn't told apart.
+  public static func label(channel: MeetingChannel, speaker: Int?, names: [Int: String]) -> String {
+    guard channel == .others, let speaker else { return channel.label }
+    return names[speaker] ?? "Speaker \(speaker)"
   }
 
   public static func timestamp(_ seconds: Double) -> String {

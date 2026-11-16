@@ -726,6 +726,8 @@ public actor FlowStore {
     ],
     // v9: the calendar event a meeting was started for, when it was.
     ["ALTER TABLE meetings ADD COLUMN event_title TEXT"],
+    // v10: names the user gave a meeting's "Others" speakers, as JSON.
+    ["ALTER TABLE meetings ADD COLUMN speaker_names TEXT"],
   ]
 
   private func migrate() throws {

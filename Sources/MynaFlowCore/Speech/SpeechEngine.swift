@@ -26,11 +26,31 @@ public enum EngineID: String, Codable, Equatable, Sendable {
 public struct TranscriptionResult: Equatable, Sendable {
   public let text: String
   public let durationSeconds: Double
+  /// Per-word timing within the audio, when the engine provides it. Meeting
+  /// notes use it to split a chunk between speakers; dictation ignores it.
+  public let words: [TimedWord]?
 
-  public init(text: String, durationSeconds: Double) {
+  public init(text: String, durationSeconds: Double, words: [TimedWord]? = nil) {
     self.text = text
     self.durationSeconds = durationSeconds
+    self.words = words
   }
+}
+
+/// One recognized word and where it sits in the audio, in seconds.
+public struct TimedWord: Equatable, Sendable {
+  public let text: String
+  public let start: Double
+  public let end: Double
+
+  public init(text: String, start: Double, end: Double) {
+    self.text = text
+    self.start = start
+    self.end = end
+  }
+
+  var midpoint: Double { (start + end) / 2 }
+  var duration: Double { max(0, end - start) }
 }
 
 public struct SpeechEngineError: Error, Equatable, CustomStringConvertible, Sendable {
