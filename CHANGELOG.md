@@ -3,6 +3,24 @@
 All notable changes to Myna Flow. Versions follow the app's
 `CFBundleShortVersionString`.
 
+## 1.3.0
+
+### New
+- **Separate speakers in meeting notes.** Install it once (about 14 MB) from the
+  Meetings page and **Others** is split into **Speaker 1, 2, …**, each in its own
+  colour, with a filter per speaker. Click a speaker to name them for that
+  meeting; names appear in the transcript and in Markdown export. It runs on
+  this Mac, on each 30-second chunk just before that chunk is deleted, so audio
+  is still never kept. A speaker keeps the same number for the whole meeting.
+- Parakeet now reports when each word was spoken, so a chunk is split mid-way
+  when the speaker changes.
+
+### Known limits
+- Speakers are told apart per 30-second chunk, so the first minute (while the
+  voices are new) and chunk edges are the least accurate. Overlapping speech is
+  given to one speaker. With the Apple Speech fallback, a chunk goes whole to the
+  speaker heard most.
+
 ## 1.2.2
 
 ### Changes

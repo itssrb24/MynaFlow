@@ -183,6 +183,12 @@ deleted. When you click **Stop & Summarize**, the local language model turns the
 transcript into key points and action items. No model installed? The transcript
 is still saved, with a note saying why there is no summary.
 
+Install **Separate speakers** (14 MB, once) and **Others** is split into
+**Speaker 1, 2, …**, each in its own colour. Click a speaker to name them for that
+meeting; the names carry into the transcript and export. It also runs on this
+Mac, on each 30-second chunk just before that chunk is deleted, so audio is still
+never kept.
+
 It can also ask for you. Turn on detection and Myna Flow offers to take notes
 when a calendar meeting is about to start, or when Zoom, Teams, FaceTime,
 Webex, Slack, Discord or a browser starts using the mic. It only ever asks:
