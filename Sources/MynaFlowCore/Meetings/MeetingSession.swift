@@ -64,7 +64,8 @@ public actor MeetingSession {
 
   private var sessionID = UUID()
   private var startedAt: Date?
-  private var eventTitle: String?
+  /// The invite this meeting is for, when there is one.
+  private var context: MeetingContext?
   private var tracks: [MeetingChannel: ChannelTrack] = [:]
   private var completedChunks: [MeetingChannel: Int] = [:]
   /// Chunk files written but not yet deleted, so cancel can remove them
@@ -113,12 +114,17 @@ public actor MeetingSession {
 
   /// `title` is the calendar event this meeting was started for, if any.
   public func start(title: String? = nil) throws {
+    try start(context: title.map { MeetingContext(title: $0) })
+  }
+
+  /// `context` is the invite this meeting is for: title, attendees, agenda.
+  public func start(context: MeetingContext?) throws {
     guard startedAt == nil, !stopping else { return }
     try FileManager.default.createDirectory(
       at: scratchDirectory, withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700])
     sessionID = UUID()
-    eventTitle = title
+    self.context = context
     cancelled = false
     writeFailure = nil
     untranscribedChunks = 0
@@ -203,7 +209,8 @@ public actor MeetingSession {
       summary: Self.summary(outcome),
       summaryNote: Self.note(
         outcome, writeFailure: writeFailure, untranscribed: untranscribedChunks),
-      eventTitle: eventTitle)
+      eventTitle: context?.title,
+      context: context)
     // Past this point the meeting is being written; a cancel can no longer
     // un-save it, so it is ignored rather than half-honoured.
     saving = true

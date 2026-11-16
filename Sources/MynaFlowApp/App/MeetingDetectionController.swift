@@ -37,9 +37,16 @@ final class MeetingDetectionController {
   func configure(store: FlowStore, recorder: MeetingRecorder) async {
     self.store = store
     self.recorder = recorder
-    recorder.currentCalendarTitle = { [weak self] in
-      guard let self, self.calendarEnabled else { return nil }
-      return CalendarMeeting.current(in: self.calendar.meetings, at: Date())?.title
+    // Notes started by hand take the meeting happening now, even with
+    // calendar prompts off, as long as calendar access was granted.
+    recorder.currentCalendarMeeting = { [weak self] in
+      guard let self else { return nil }
+      let now = Date()
+      let events =
+        self.calendarEnabled
+        ? self.calendar.meetings
+        : self.calendar.meetings(from: now.addingTimeInterval(-4 * 3600), to: now.addingTimeInterval(120))
+      return CalendarMeeting.current(in: events, at: now)
     }
     callsEnabled = (try? await store.setting(forKey: Self.callsKey)) != "0"
     calendar.selection = CalendarSelection(
@@ -171,8 +178,8 @@ final class MeetingDetectionController {
     guard primary, !stale, let recorder else { return }
     Task {
       switch prompt {
-      case .calendarStart(let meeting): await recorder.start(title: meeting.title)
-      case .callJoined(_, let meeting): await recorder.start(title: meeting?.title)
+      case .calendarStart(let meeting): await recorder.start(meeting: meeting)
+      case .callJoined(_, let meeting): await recorder.start(meeting: meeting)
       case .callEnded: await recorder.stop()
       }
     }

@@ -14,6 +14,9 @@ struct MeetingDetailView: View {
   let delete: () -> Void
   /// Names (or with "", un-names) an "Others" speaker in this meeting.
   let rename: (Int, String) -> Void
+  /// Calendar events near this meeting's start, for linking one after the fact.
+  let linkCandidates: () -> [CalendarMeeting]
+  let link: (CalendarMeeting) -> Void
 
   @State private var tab: Tab
   @State private var find: TranscriptFind
@@ -26,9 +29,13 @@ struct MeetingDetailView: View {
   init(
     meeting: MeetingRecord, initialQuery: String, back: @escaping () -> Void,
     export: @escaping () -> Void, copy: @escaping () -> Void, delete: @escaping () -> Void,
-    rename: @escaping (Int, String) -> Void
+    rename: @escaping (Int, String) -> Void,
+    linkCandidates: @escaping () -> [CalendarMeeting] = { [] },
+    link: @escaping (CalendarMeeting) -> Void = { _ in }
   ) {
     self.rename = rename
+    self.linkCandidates = linkCandidates
+    self.link = link
     self.meeting = meeting
     self.back = back
     self.export = export
@@ -80,6 +87,10 @@ struct MeetingDetailView: View {
           Text(meeting.metaLine)
             .font(Theme.Fonts.body)
             .foregroundStyle(Theme.Colors.textSecondary)
+          if let people = meeting.context?.others, !people.isEmpty {
+            AttendeeChips(attendees: people)
+              .padding(.top, 2)
+          }
         }
         Spacer(minLength: Theme.Spacing.md)
         actions
@@ -106,6 +117,9 @@ struct MeetingDetailView: View {
 
   private var actions: some View {
     HStack(spacing: Theme.Spacing.sm) {
+      if meeting.context?.eventID == nil {
+        LinkEventMenu(candidates: linkCandidates, link: link)
+      }
       IconAction(
         title: copied ? "Copied" : "Copy as Markdown",
         symbol: copied ? "checkmark" : "doc.on.doc", tint: copied ? Theme.Colors.success : nil
@@ -248,5 +262,71 @@ struct PillSegments<Value: Hashable>: View {
       RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
         .strokeBorder(Theme.Colors.hairline))
     .fixedSize()
+  }
+}
+
+/// Who was on the invite: a row of quiet name chips, the first few then
+/// "+N".
+struct AttendeeChips: View {
+  let attendees: [MeetingAttendee]
+  private static let shown = 6
+
+  var body: some View {
+    HStack(spacing: 6) {
+      Image(systemName: "person.2")
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(Theme.Colors.textTertiary)
+        .accessibilityHidden(true)
+      ForEach(attendees.prefix(Self.shown), id: \.self) { person in
+        Text(person.displayName)
+          .font(Theme.Fonts.caption)
+          .foregroundStyle(Theme.Colors.textSecondary)
+          .padding(.horizontal, 7)
+          .padding(.vertical, 2)
+          .background(Capsule().fill(Theme.Colors.surface))
+          .overlay(Capsule().strokeBorder(Theme.Colors.hairline))
+          .help(person.email ?? person.displayName)
+      }
+      if attendees.count > Self.shown {
+        Text("+\(attendees.count - Self.shown)")
+          .font(Theme.Fonts.caption)
+          .foregroundStyle(Theme.Colors.textTertiary)
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Invited: " + attendees.map(\.displayName).joined(separator: ", "))
+  }
+}
+
+/// "Link to calendar event…" for a meeting recorded without one: events
+/// within three hours of its start, listed when the menu opens.
+struct LinkEventMenu: View {
+  let candidates: () -> [CalendarMeeting]
+  let link: (CalendarMeeting) -> Void
+
+  var body: some View {
+    Menu {
+      let events = candidates()
+      if events.isEmpty {
+        Text("No calendar events near this meeting")
+      }
+      ForEach(events) { event in
+        Button("\(event.start.formatted(date: .omitted, time: .shortened))  \(event.title)") {
+          link(event)
+        }
+      }
+    } label: {
+      Image(systemName: "calendar.badge.plus")
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(Theme.Colors.textSecondary)
+        .frame(width: 32, height: 32)
+        .background(Circle().fill(Theme.Colors.surface))
+        .overlay(Circle().strokeBorder(Theme.Colors.hairline))
+    }
+    .menuStyle(.borderlessButton)
+    .menuIndicator(.hidden)
+    .fixedSize()
+    .help("Link to calendar event…")
+    .accessibilityLabel("Link to calendar event")
   }
 }

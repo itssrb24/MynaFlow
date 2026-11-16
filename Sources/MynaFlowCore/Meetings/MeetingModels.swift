@@ -65,6 +65,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
   public let eventTitle: String?
   /// Names the user gave "Others" speakers in this meeting, by number.
   public let speakerNames: [Int: String]
+  /// The invite the meeting was recorded for: attendees, agenda, series.
+  public let context: MeetingContext?
 
   public init(
     id: UUID = UUID(),
@@ -74,7 +76,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     summary: MeetingSummary?,
     summaryNote: String?,
     eventTitle: String? = nil,
-    speakerNames: [Int: String] = [:]
+    speakerNames: [Int: String] = [:],
+    context: MeetingContext? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -84,6 +87,7 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     self.summaryNote = summaryNote
     self.eventTitle = eventTitle
     self.speakerNames = speakerNames
+    self.context = context
   }
 
   /// "You", a speaker's given name, "Speaker N", or "Others".
@@ -177,6 +181,12 @@ public enum MeetingExporter {
       "# \(meeting.title)",
       "Duration: \(MeetingTranscript.timestamp(meeting.durationSeconds))",
     ]
+    if let people = meeting.context?.others, !people.isEmpty {
+      sections[1] += "\nInvited: " + people.map(\.displayName).joined(separator: ", ")
+    }
+    if let agenda = meeting.context?.agenda {
+      sections.append("## Agenda\n" + agenda)
+    }
     if let summary = meeting.summary {
       sections.append("## Key points\n" + bulleted(summary.keyPoints, prefix: "- "))
       sections.append("## Action items\n" + bulleted(summary.actionItems, prefix: "- [ ] "))

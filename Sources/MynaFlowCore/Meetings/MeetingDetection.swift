@@ -9,13 +9,27 @@ public struct CalendarMeeting: Sendable, Equatable, Identifiable {
   public let end: Date
   /// A video-call link from the event, when it has one.
   public let link: URL?
+  /// EventKit's item identifier — shared by every occurrence of a series.
+  public let eventID: String?
+  /// People on the invite (rooms and robot addresses already removed).
+  public let attendees: [MeetingAttendee]
+  public let organizer: String?
+  /// The invite's notes without the video-call footer.
+  public let agenda: String?
 
-  public init(id: String, title: String, start: Date, end: Date, link: URL?) {
+  public init(
+    id: String, title: String, start: Date, end: Date, link: URL?, eventID: String? = nil,
+    attendees: [MeetingAttendee] = [], organizer: String? = nil, agenda: String? = nil
+  ) {
     self.id = id
     self.title = title
     self.start = start
     self.end = end
     self.link = link
+    self.eventID = eventID
+    self.attendees = attendees
+    self.organizer = organizer
+    self.agenda = agenda
   }
 
   /// The meeting happening at `date` (or starting within `leadTime`), so

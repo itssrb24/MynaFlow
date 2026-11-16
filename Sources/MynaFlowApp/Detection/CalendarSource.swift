@@ -122,6 +122,17 @@ final class CalendarSource {
       .sorted { $0.start < $1.start }
   }
 
+  /// Meetings overlapping a time range in the watched calendars, whether or
+  /// not calendar prompts are on — for naming a manual start and for
+  /// linking a past meeting to its event.
+  func meetings(from start: Date, to end: Date) -> [CalendarMeeting] {
+    guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return [] }
+    let watched = store.calendars(for: .event).filter { selection.includes($0.calendarIdentifier) }
+    guard !watched.isEmpty else { return [] }
+    let predicate = store.predicateForEvents(withStart: start, end: end, calendars: watched)
+    return store.events(matching: predicate).compactMap(Self.meeting(from:)).sorted { $0.start < $1.start }
+  }
+
   /// Timed events the user hasn't declined or seen cancelled, that look
   /// like meetings: a video link, or someone else invited. "Lunch" and
   /// subscribed calendars (holidays, sports) never prompt.
@@ -140,6 +151,24 @@ final class CalendarSource {
     let title = event.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     return CalendarMeeting(
       id: id, title: title.isEmpty ? "Untitled meeting" : title, start: start, end: end,
-      link: link)
+      link: link, eventID: event.calendarItemIdentifier,
+      attendees: attendees.compactMap(Self.attendee(from:)),
+      organizer: event.organizer.flatMap { $0.name ?? Self.email(of: $0) },
+      agenda: InviteAgenda.clean(event.notes))
+  }
+
+  /// A person on the invite; rooms, resources and groups are skipped.
+  private static func attendee(from participant: EKParticipant) -> MeetingAttendee? {
+    guard participant.participantType == .person || participant.participantType == .unknown
+    else { return nil }
+    let email = email(of: participant)
+    guard MeetingAttendee.isPerson(name: participant.name, email: email) else { return nil }
+    return MeetingAttendee(name: participant.name, email: email, isSelf: participant.isCurrentUser)
+  }
+
+  private static func email(of participant: EKParticipant) -> String? {
+    let url = participant.url.absoluteString
+    guard url.lowercased().hasPrefix("mailto:") else { return nil }
+    return String(url.dropFirst("mailto:".count)).removingPercentEncoding
   }
 }

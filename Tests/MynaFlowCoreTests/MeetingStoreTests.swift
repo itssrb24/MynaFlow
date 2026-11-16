@@ -27,6 +27,47 @@ private func makeMeeting(
 
 @Suite("Meeting persistence")
 struct MeetingStoreTests {
+  @Test("a meeting keeps its invite context, and can be linked to an event later")
+  func contextRoundTrip() async throws {
+    let store = try await FlowStore.open(at: temporaryDatabaseURL())
+    let context = MeetingContext(
+      title: "Launch sync", eventID: "E1", seriesKey: "event:E1",
+      attendees: [MeetingAttendee(name: "Maurice Lee", email: "maurice@x.com")],
+      organizer: "Maurice Lee", agenda: "Budget")
+    let linked = MeetingRecord(
+      startedAt: Date(timeIntervalSince1970: 1_800_000_000), durationSeconds: 60, segments: [],
+      summary: nil, summaryNote: "n", eventTitle: "Launch sync", context: context)
+    let manual = MeetingRecord(
+      startedAt: Date(timeIntervalSince1970: 1_800_000_100), durationSeconds: 60, segments: [],
+      summary: nil, summaryNote: "n")
+    try await store.insertMeeting(linked)
+    try await store.insertMeeting(manual)
+    try await store.setMeetingContext(context, meetingID: manual.id)
+
+    let loaded = try await store.meetings(limit: 5)
+    #expect(loaded.allSatisfy { $0.context == context })
+    #expect(loaded.allSatisfy { $0.eventTitle == "Launch sync" })
+    #expect(try await store.meetings(inSeries: "event:E1", before: Date(timeIntervalSince1970: 1_800_000_050)).map(\.id) == [linked.id])
+    await store.close()
+  }
+
+  @Test("export lists who was invited and the agenda")
+  func exportCarriesContext() {
+    let meeting = MeetingRecord(
+      startedAt: Date(timeIntervalSince1970: 1_800_000_000), durationSeconds: 60, segments: [],
+      summary: nil, summaryNote: "n", eventTitle: "Launch sync",
+      context: MeetingContext(
+        title: "Launch sync",
+        attendees: [
+          MeetingAttendee(name: "Me", email: "me@x.com", isSelf: true),
+          MeetingAttendee(name: "Maurice Lee", email: "maurice@x.com"),
+          MeetingAttendee(name: nil, email: "dan.smith@x.com"),
+        ], agenda: "1. Budget"))
+    let markdown = MeetingExporter.markdown(meeting)
+    #expect(markdown.contains("Invited: Maurice Lee, Dan Smith"))
+    #expect(markdown.contains("## Agenda\n1. Budget"))
+  }
+
   @Test("speakers on segments and names given later both survive a reload")
   func speakerNamesRoundTrip() async throws {
     let store = try await FlowStore.open(at: temporaryDatabaseURL())

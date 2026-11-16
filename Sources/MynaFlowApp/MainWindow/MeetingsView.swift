@@ -21,7 +21,13 @@ struct MeetingsView: View {
           export: { recorder.export(meeting) },
           copy: { recorder.copyMarkdown(meeting) },
           delete: { confirmDelete = meeting },
-          rename: { speaker, name in Task { await recorder.renameSpeaker(speaker, to: name, in: meeting) } })
+          rename: { speaker, name in Task { await recorder.renameSpeaker(speaker, to: name, in: meeting) } },
+          linkCandidates: {
+            detection.calendar.meetings(
+              from: meeting.startedAt.addingTimeInterval(-3 * 3600),
+              to: meeting.startedAt.addingTimeInterval(3 * 3600))
+          },
+          link: { event in Task { await recorder.link(meeting, to: event) } })
         .transition(.opacity.combined(with: .offset(x: 16)))
       } else {
         listPage.transition(.opacity)

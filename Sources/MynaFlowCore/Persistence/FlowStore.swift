@@ -728,6 +728,13 @@ public actor FlowStore {
     ["ALTER TABLE meetings ADD COLUMN event_title TEXT"],
     // v10: names the user gave a meeting's "Others" speakers, as JSON.
     ["ALTER TABLE meetings ADD COLUMN speaker_names TEXT"],
+    // v11: the invite a meeting was recorded for (JSON), and its series key
+    // so the previous meeting of a recurring series can be found.
+    [
+      "ALTER TABLE meetings ADD COLUMN context TEXT",
+      "ALTER TABLE meetings ADD COLUMN series_key TEXT",
+      "CREATE INDEX idx_meetings_series ON meetings(series_key, started_at)",
+    ],
   ]
 
   private func migrate() throws {

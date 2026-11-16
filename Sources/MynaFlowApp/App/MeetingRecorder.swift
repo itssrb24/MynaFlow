@@ -71,7 +71,7 @@ final class MeetingRecorder {
   @ObservationIgnored private var makeDiarizer: () async -> (any SpeakerDiarizing)? = { nil }
   /// The calendar meeting happening now, for notes started by hand. Set by
   /// the detection controller; nil while calendar prompts are off.
-  @ObservationIgnored var currentCalendarTitle: () -> String? = { nil }
+  @ObservationIgnored var currentCalendarMeeting: () -> CalendarMeeting? = { nil }
 
   func configure(
     store: FlowStore,
@@ -111,7 +111,9 @@ final class MeetingRecorder {
   // MARK: - Start
 
   /// `title` names the calendar meeting the notes are for, when known.
-  func start(title: String? = nil) async {
+  /// `meeting` is the calendar invite the notes are for, when known;
+  /// otherwise the meeting happening now is looked up.
+  func start(meeting: CalendarMeeting? = nil) async {
     guard phase == .idle else { return }
     notice = nil
     guard let store, let scratch else {
@@ -135,7 +137,7 @@ final class MeetingRecorder {
     // `.starting` can find and cancel it.
     self.session = session
     do {
-      try await session.start(title: title ?? currentCalendarTitle())
+      try await session.start(context: (meeting ?? currentCalendarMeeting()).map(MeetingContext.init))
       guard phase == .starting else {
         // Cancelled while the session was opening; close what it opened.
         await session.cancel()
@@ -278,6 +280,16 @@ final class MeetingRecorder {
 
   func refresh() async {
     meetings = (try? await store?.meetings(limit: 200)) ?? []
+  }
+
+  /// Attaches a calendar invite to a meeting recorded without one.
+  func link(_ meeting: MeetingRecord, to event: CalendarMeeting) async {
+    do {
+      try await store?.setMeetingContext(MeetingContext(event), meetingID: meeting.id)
+    } catch {
+      post("Could not link the calendar event: \(error.localizedDescription)", .error)
+    }
+    await refresh()
   }
 
   /// Names one "Others" speaker in one meeting; a blank name clears it.

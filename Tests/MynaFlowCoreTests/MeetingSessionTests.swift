@@ -521,6 +521,24 @@ struct MeetingSessionTests {
     #expect(record.segments.last?.text == "Yes, my update is on the free trial.")
   }
 
+  @Test("a meeting started for an invite is saved with its context")
+  func contextSaved() async throws {
+    let scratch = try makeScratch()
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: ChunkNamingTranscriber(), store: store, scratch: scratch)
+    let context = MeetingContext(
+      title: "Launch sync", eventID: "E1", seriesKey: "event:E1",
+      attendees: [MeetingAttendee(name: "Maurice Lee", email: "maurice@x.com")])
+    try await session.start(context: context)
+    await session.append(frame(seconds: 1), channel: .you)
+    guard case .saved(let record) = await session.stop() else {
+      Issue.record("expected saved")
+      return
+    }
+    #expect(record.context == context)
+    #expect(record.eventTitle == "Launch sync")
+  }
+
   @Test("an Others chunk is split between the speakers heard in it, numbered by first appearance")
   func othersSplitBySpeaker() async throws {
     let scratch = try makeScratch()

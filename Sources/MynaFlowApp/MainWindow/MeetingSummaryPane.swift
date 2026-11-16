@@ -10,6 +10,21 @@ struct MeetingSummaryPane: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
+      if let agenda = meeting.context?.agenda {
+        DisclosureGroup {
+          Text(agenda)
+            .font(Theme.Fonts.body)
+            .lineSpacing(3)
+            .foregroundStyle(Theme.Colors.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
+            .padding(.top, Theme.Spacing.xs)
+        } label: {
+          SectionLabel(text: "Agenda from the invite")
+        }
+        .tint(Theme.Colors.textSecondary)
+        .inset(padding: Theme.Spacing.md)
+      }
       if let summary = meeting.summary {
         if summary.keyPoints.isEmpty && summary.actionItems.isEmpty {
           missing("The model found nothing to summarize in this meeting.")

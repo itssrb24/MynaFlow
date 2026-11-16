@@ -14,12 +14,13 @@ extension FlowStore {
       String(decoding: try encoder.encode($0.actionItems), as: UTF8.self)
     }
     let names = record.speakerNames.isEmpty ? nil : try Self.encodeNames(record.speakerNames)
+    let context = try record.context.map { String(decoding: try encoder.encode($0), as: UTF8.self) }
     try run(
       """
       INSERT INTO meetings (
         id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
-        event_title, speaker_names
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        event_title, speaker_names, context, series_key
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
       """,
       bind: { statement in
         sqlite3_bind_text(statement, 1, record.id.uuidString, -1, transient)
@@ -31,8 +32,47 @@ extension FlowStore {
         bindText(statement, 7, record.summaryNote)
         bindText(statement, 8, record.eventTitle)
         bindText(statement, 9, names)
+        bindText(statement, 10, context)
+        bindText(statement, 11, record.context?.seriesKey)
       })
   }
+
+  /// Attaches an invite to a meeting after the fact ("Link to calendar
+  /// event…"); its title becomes the meeting's name.
+  public func setMeetingContext(_ context: MeetingContext, meetingID: UUID) throws {
+    let json = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
+    let key = meetingID.uuidString
+    try run(
+      "UPDATE meetings SET context = ?1, series_key = ?2, event_title = ?3 WHERE id = ?4",
+      bind: { statement in
+        bindText(statement, 1, json)
+        bindText(statement, 2, context.seriesKey)
+        bindText(statement, 3, context.title)
+        sqlite3_bind_text(statement, 4, key, -1, transient)
+      })
+  }
+
+  /// Earlier meetings of the same recurring series, newest first.
+  public func meetings(inSeries seriesKey: String, before date: Date, limit: Int = 3) throws
+    -> [MeetingRecord]
+  {
+    try query(
+      """
+      SELECT \(Self.meetingColumns) FROM meetings
+      WHERE series_key = ?1 AND started_at < ?2 ORDER BY started_at DESC LIMIT ?3
+      """,
+      bind: { statement in
+        sqlite3_bind_text(statement, 1, seriesKey, -1, transient)
+        sqlite3_bind_double(statement, 2, date.timeIntervalSince1970)
+        sqlite3_bind_int(statement, 3, Int32(limit))
+      },
+      row: Self.readMeeting)
+  }
+
+  private static let meetingColumns = """
+    id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
+      event_title, speaker_names, context
+    """
 
   /// Names (or, with a blank name, un-names) one speaker in one meeting.
   public func setSpeakerName(_ name: String, speaker: Int, meetingID: UUID) throws {
@@ -71,8 +111,7 @@ extension FlowStore {
   public func meetings(limit: Int) throws -> [MeetingRecord] {
     try query(
       """
-      SELECT id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
-        event_title, speaker_names
+      SELECT \(Self.meetingColumns)
       FROM meetings ORDER BY started_at DESC LIMIT ?1
       """,
       bind: { sqlite3_bind_int($0, 1, Int32(limit)) },
@@ -108,7 +147,10 @@ extension FlowStore {
       summary: summary,
       summaryNote: text(statement, 6),
       eventTitle: text(statement, 7),
-      speakerNames: try text(statement, 8).map(decodeNames) ?? [:])
+      speakerNames: try text(statement, 8).map(decodeNames) ?? [:],
+      context: try text(statement, 9).map {
+        try decoder.decode(MeetingContext.self, from: Data($0.utf8))
+      })
   }
 }
 
