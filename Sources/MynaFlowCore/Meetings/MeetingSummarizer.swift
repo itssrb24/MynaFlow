@@ -22,10 +22,15 @@ public struct SummaryContext: Equatable, Sendable {
   public var speakerNames: [Int: String]
   public var type: MeetingType
   public var previous: PreviousMeeting?
+  /// The user's own notes from the meeting, "[mm:ss] text".
+  public var notes: [String]
+  /// What was said around each moment the user flagged, "[mm:ss] text".
+  public var flagged: [String]
 
   public init(
     title: String? = nil, attendees: [String] = [], organizer: String? = nil, agenda: String? = nil,
-    speakerNames: [Int: String] = [:], type: MeetingType = .general, previous: PreviousMeeting? = nil
+    speakerNames: [Int: String] = [:], type: MeetingType = .general, previous: PreviousMeeting? = nil,
+    notes: [String] = [], flagged: [String] = []
   ) {
     self.title = title
     self.attendees = attendees
@@ -34,6 +39,8 @@ public struct SummaryContext: Equatable, Sendable {
     self.speakerNames = speakerNames
     self.type = type
     self.previous = previous
+    self.notes = notes
+    self.flagged = flagged
   }
 }
 
@@ -174,6 +181,16 @@ public struct MeetingSummarizer: Sendable {
         recap += "\nStill open from then:\n" + previous.openActions.map { "- " + $0 }.joined(separator: "\n")
       }
       lines.append(recap + "\nSay what moved on since, where the transcript shows it.")
+    }
+    if !context.notes.isEmpty {
+      lines.append(
+        "The user's own notes during the meeting — use them, they show what mattered to them:\n"
+          + context.notes.map { "- " + sanitize($0) }.joined(separator: "\n"))
+    }
+    if !context.flagged.isEmpty {
+      lines.append(
+        "The user flagged these moments as important — make sure the summary covers them:\n"
+          + context.flagged.map { "- " + sanitize($0) }.joined(separator: "\n"))
     }
     lines.append(context.type.focus)
     return lines.joined(separator: "\n")

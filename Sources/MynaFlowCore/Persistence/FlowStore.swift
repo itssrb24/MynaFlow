@@ -763,6 +763,8 @@ public actor FlowStore {
       "ALTER TABLE meetings ADD COLUMN speaker_profiles TEXT",
       "ALTER TABLE meetings ADD COLUMN speaker_suggestions TEXT",
     ],
+    // v15: notes typed and moments flagged while recording.
+    ["ALTER TABLE meetings ADD COLUMN notes TEXT"],
   ]
 
   private func migrate() throws {

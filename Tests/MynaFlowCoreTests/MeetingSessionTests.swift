@@ -762,3 +762,55 @@ struct MeetingTranscriptTests {
     #expect(text == "[00:00] You: Hi all\n[01:35] Others: Hello")
   }
 }
+
+@Suite("MeetingSession — notes, flags and learned words")
+struct MeetingSessionNotesTests {
+  @Test("notes and flags are stamped with the meeting's audio time and saved")
+  func notesAndFlags() async throws {
+    let scratch = try makeScratch()
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: ChunkNamingTranscriber(), store: store, scratch: scratch)
+
+    try await session.start(title: "Sync")
+    await session.append(frame(seconds: 2.5), channel: .you)
+    #expect(await session.addNote("  Ask about budget  "))
+    #expect(await !session.addNote("   "))
+    #expect(await session.flagMoment())
+    let result = await session.stop()
+    guard case .saved(let record) = result else {
+      Issue.record("expected saved, got \(result)")
+      return
+    }
+    #expect(record.notes.map(\.kind) == [.note, .flag])
+    #expect(record.notes.first?.text == "Ask about budget")
+    #expect(abs((record.notes.last?.seconds ?? 0) - 2.5) < 0.01)
+  }
+
+  @Test("without a meeting, notes and flags are refused")
+  func notRecording() async throws {
+    let session = makeSession(
+      transcriber: ChunkNamingTranscriber(), store: FakeMeetingStore(), scratch: try makeScratch())
+    #expect(await !session.addNote("hi"))
+    #expect(await !session.flagMoment())
+  }
+
+  @Test("approved word replacements apply to meeting text")
+  func replacements() async throws {
+    let scratch = try makeScratch()
+    let transcriber = ChunkNamingTranscriber()
+    await transcriber.setScripted(["you#0": "Thanks morris"])
+    let store = FakeMeetingStore()
+    let session = makeSession(transcriber: transcriber, store: store, scratch: scratch)
+    let rules = LearnedRules(
+      approved: [LearnedRule(kind: .replacement, pattern: "morris", replacement: "Maurice", evidence: 2)])
+
+    try await session.start(context: nil, replacements: rules)
+    await session.append(frame(seconds: 1), channel: .you)
+    let result = await session.stop()
+    guard case .saved(let record) = result else {
+      Issue.record("expected saved, got \(result)")
+      return
+    }
+    #expect(record.segments.map(\.text) == ["Thanks Maurice"])
+  }
+}

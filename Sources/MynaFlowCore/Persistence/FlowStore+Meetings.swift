@@ -19,6 +19,7 @@ extension FlowStore {
       ? nil : String(decoding: try encoder.encode(record.speakerProfiles), as: UTF8.self)
     let suggestions = record.speakerSuggestions.isEmpty ? nil : try Self.encodeLinks(record.speakerSuggestions)
     let people = record.speakerPeople.isEmpty ? nil : try Self.encodeLinks(record.speakerPeople)
+    let notes = record.notes.isEmpty ? nil : String(decoding: try encoder.encode(record.notes), as: UTF8.self)
     let decisions = try record.summary.map {
       String(decoding: try encoder.encode($0.decisions), as: UTF8.self)
     }
@@ -27,8 +28,8 @@ extension FlowStore {
       INSERT INTO meetings (
         id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
         event_title, speaker_names, context, series_key, overview, decisions, meeting_type,
-        summary_basis, speaker_people, speaker_profiles, speaker_suggestions
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+        summary_basis, speaker_people, speaker_profiles, speaker_suggestions, notes
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
       """,
       bind: { statement in
         sqlite3_bind_text(statement, 1, record.id.uuidString, -1, transient)
@@ -49,6 +50,7 @@ extension FlowStore {
         bindText(statement, 16, people)
         bindText(statement, 17, profiles)
         bindText(statement, 18, suggestions)
+        bindText(statement, 19, notes)
       })
     try upsertPeople(record.context?.others ?? [])
   }
@@ -115,7 +117,7 @@ extension FlowStore {
   private static let meetingColumns = """
     id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
       event_title, speaker_names, context, overview, decisions, meeting_type, summary_basis,
-      speaker_people, speaker_profiles, speaker_suggestions
+      speaker_people, speaker_profiles, speaker_suggestions, notes
     """
 
   // MARK: - People
@@ -267,6 +269,46 @@ extension FlowStore {
     try writeProfiles((others + [profile]).sorted { $0.speaker < $1.speaker }, meetingID: meetingID)
   }
 
+  /// Saves a hand-edited turn and learns from it: names the engine got
+  /// wrong join vocabulary (heard right next time) and become suggested
+  /// replacements in the review list — applied only once approved.
+  /// A fix seen again adds evidence. Returns what was learned.
+  @discardableResult
+  public func editTurn(
+    startingAt seconds: Double, channel: MeetingChannel, text: String, meetingID: UUID
+  ) throws -> [LearnedSubstitution] {
+    let edited = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let meeting = try meeting(id: meetingID), !edited.isEmpty,
+      let turn = MeetingTranscript.turns(meeting.segments).first(where: {
+        $0.channel == channel && abs($0.startSeconds - seconds) < 0.001
+      }), turn.text != edited
+    else { return [] }
+    let segments = MeetingTranscript.replacingTurn(
+      startingAt: seconds, channel: channel, with: edited, in: meeting.segments)
+    try writeSegments(segments, meetingID: meetingID)
+    let learned = CorrectionLearner.learn(original: turn.text, edited: edited)
+    let existing = try allLearnedRules().map(\.rule).filter { $0.kind == .replacement }
+    for fix in learned {
+      try addVocabularyTerm(fix.right, source: .learned)
+      let pattern = fix.wrong.lowercased()
+      let seen = existing.first { $0.pattern == pattern && $0.replacement == fix.right }?.evidence ?? 0
+      try upsertSuggestedRule(
+        LearnedRule(kind: .replacement, pattern: pattern, replacement: fix.right, evidence: seen + 1))
+    }
+    return learned
+  }
+
+  private func writeSegments(_ segments: [MeetingSegment], meetingID: UUID) throws {
+    let json = String(decoding: try JSONEncoder().encode(segments), as: UTF8.self)
+    let key = meetingID.uuidString
+    try run(
+      "UPDATE meetings SET segments = ?1 WHERE id = ?2",
+      bind: { statement in
+        sqlite3_bind_text(statement, 1, json, -1, transient)
+        sqlite3_bind_text(statement, 2, key, -1, transient)
+      })
+  }
+
   /// "Same person": every line of `from` becomes `into`'s, and `from`'s name
   /// and person link go.
   public func mergeSpeaker(_ from: Int, into: Int, meetingID: UUID) throws {
@@ -276,14 +318,7 @@ extension FlowStore {
         ? MeetingSegment(channel: $0.channel, startSeconds: $0.startSeconds, text: $0.text, speaker: into)
         : $0
     }
-    let json = String(decoding: try JSONEncoder().encode(segments), as: UTF8.self)
-    let key = meetingID.uuidString
-    try run(
-      "UPDATE meetings SET segments = ?1 WHERE id = ?2",
-      bind: { statement in
-        sqlite3_bind_text(statement, 1, json, -1, transient)
-        sqlite3_bind_text(statement, 2, key, -1, transient)
-      })
+    try writeSegments(segments, meetingID: meetingID)
     try setSpeakerName("", speaker: from, meetingID: meetingID)
     var links = meeting.speakerPeople
     links[from] = nil
@@ -422,7 +457,10 @@ extension FlowStore {
       speakerProfiles: try text(statement, 15).map {
         try decoder.decode([SpeakerProfile].self, from: Data($0.utf8))
       } ?? [],
-      speakerSuggestions: try text(statement, 16).map(decodePeople) ?? [:])
+      speakerSuggestions: try text(statement, 16).map(decodePeople) ?? [:],
+      notes: try text(statement, 17).map {
+        try decoder.decode([MeetingNote].self, from: Data($0.utf8))
+      } ?? [])
   }
 }
 

@@ -4,6 +4,8 @@ public enum VocabularySource: String, Codable, Equatable, Sendable {
   case manual
   /// Approved from the corrections review queue.
   case promoted
+  /// Learned from a hand-edited meeting transcript line.
+  case learned
 }
 
 public struct VocabularyTerm: Identifiable, Equatable, Sendable {

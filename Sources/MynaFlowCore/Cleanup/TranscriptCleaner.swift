@@ -74,6 +74,16 @@ public struct TranscriptCleaner: Sendable {
     return CleanupResult(text: Self.render(tokens), removals: removals)
   }
 
+  /// Only the approved word replacements — no filler removal, no added
+  /// periods. For meeting text, where the rest of dictation's clean-up
+  /// would rewrite what people said.
+  public func replacingLearnedWords(_ text: String) -> String {
+    guard learned.isActive, !learned.replacements.isEmpty else { return text }
+    var tokens = Self.tokenize(text)
+    applyReplacements(&tokens)
+    return Self.render(tokens)
+  }
+
   // MARK: - Tokens
 
   private struct Token {

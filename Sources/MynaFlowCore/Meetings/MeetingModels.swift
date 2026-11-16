@@ -42,6 +42,35 @@ public struct MeetingSegment: Codable, Equatable, Sendable {
   }
 }
 
+/// Something the user added while recording: a typed note, or a flag
+/// marking the moment just heard as important.
+public struct MeetingNote: Codable, Equatable, Sendable {
+  public enum Kind: String, Codable, Sendable {
+    case note
+    case flag
+  }
+
+  /// A flag covers this much of what was said before it.
+  public static let flagWindowSeconds = 40.0
+
+  public let kind: Kind
+  /// Audio time into the meeting.
+  public let seconds: Double
+  /// The note's words; nil for a flag.
+  public let text: String?
+
+  public init(kind: Kind, seconds: Double, text: String? = nil) {
+    self.kind = kind
+    self.seconds = seconds
+    self.text = text
+  }
+
+  /// Whether a line starting at `time` falls in this flag's window.
+  public func covers(_ time: Double) -> Bool {
+    kind == .flag && time >= seconds - Self.flagWindowSeconds && time <= seconds
+  }
+}
+
 public struct MeetingSummary: Codable, Equatable, Sendable {
   /// Two or three sentences on what the meeting was about and concluded.
   public let overview: String?
@@ -95,6 +124,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
   /// What the summary was written from (names, type, invite); when it no
   /// longer matches, the summary is out of date.
   public let summaryBasis: String?
+  /// Notes typed and moments flagged while recording, in time order.
+  public let notes: [MeetingNote]
 
   public init(
     id: UUID = UUID(),
@@ -110,7 +141,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     summaryBasis: String? = nil,
     speakerPeople: [Int: UUID] = [:],
     speakerProfiles: [SpeakerProfile] = [],
-    speakerSuggestions: [Int: UUID] = [:]
+    speakerSuggestions: [Int: UUID] = [:],
+    notes: [MeetingNote] = []
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -126,6 +158,7 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     self.speakerPeople = speakerPeople
     self.speakerProfiles = speakerProfiles
     self.speakerSuggestions = speakerSuggestions
+    self.notes = notes
   }
 
   /// A fingerprint of everything the summary depends on besides the
@@ -134,7 +167,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     let names = speakerNames.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
     let invite = [context?.title, context?.agenda].compactMap { $0 }
       + (context?.attendees.map(\.displayName) ?? [])
-    return (names + [meetingType?.rawValue ?? "-"] + invite).joined(separator: "|")
+    let jotted = notes.map { "\($0.kind.rawValue)@\(Int($0.seconds)):\($0.text ?? "")" }
+    return (names + [meetingType?.rawValue ?? "-"] + invite + jotted).joined(separator: "|")
   }
 
   /// Speakers were named, the type changed, or an invite was linked since
@@ -153,13 +187,23 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     let draft = MeetingRecord(
       id: id, startedAt: startedAt, durationSeconds: durationSeconds, segments: segments,
       summary: summary, summaryNote: note, eventTitle: eventTitle, speakerNames: speakerNames,
-      context: context, meetingType: type)
+      context: context, meetingType: type, notes: notes)
     return MeetingRecord(
       id: id, startedAt: startedAt, durationSeconds: durationSeconds, segments: segments,
       summary: summary, summaryNote: note, eventTitle: eventTitle, speakerNames: speakerNames,
       context: context, meetingType: type, summaryBasis: draft.currentSummaryBasis,
       speakerPeople: speakerPeople, speakerProfiles: speakerProfiles,
-      speakerSuggestions: speakerSuggestions)
+      speakerSuggestions: speakerSuggestions, notes: notes)
+  }
+
+  /// This record with its transcript replaced (an edited line).
+  public func replacingSegments(_ segments: [MeetingSegment]) -> MeetingRecord {
+    MeetingRecord(
+      id: id, startedAt: startedAt, durationSeconds: durationSeconds, segments: segments,
+      summary: summary, summaryNote: summaryNote, eventTitle: eventTitle, speakerNames: speakerNames,
+      context: context, meetingType: meetingType, summaryBasis: summaryBasis,
+      speakerPeople: speakerPeople, speakerProfiles: speakerProfiles,
+      speakerSuggestions: speakerSuggestions, notes: notes)
   }
 
   /// What the summarizer needs besides the transcript.
@@ -167,8 +211,21 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     SummaryContext(
       title: context?.title ?? eventTitle, attendees: context?.others.map(\.displayName) ?? [],
       organizer: context?.organizer, agenda: context?.agenda, speakerNames: speakerNames,
-      type: meetingType ?? .general, previous: previous)
+      type: meetingType ?? .general, previous: previous,
+      notes: notes.compactMap { note in
+        note.text.map { "[\(MeetingTranscript.timestamp(note.seconds))] " + $0 }
+      },
+      flagged: notes.filter { $0.kind == .flag }.compactMap { flag in
+        let heard = MeetingTranscript.merge(segments).filter { flag.covers($0.startSeconds) }
+        guard !heard.isEmpty else { return nil }
+        let text = heard.map { $0.text.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
+        return "[\(MeetingTranscript.timestamp(flag.seconds))] " + String(text.prefix(Self.flaggedExcerptLimit))
+      })
   }
+
+  /// A flagged moment's excerpt in the summary prompt is capped, since the
+  /// prompt header repeats in every part.
+  static let flaggedExcerptLimit = 400
 
   /// "You", a speaker's given name, "Speaker N", or "Others".
   public func label(channel: MeetingChannel, speaker: Int?) -> String {
@@ -221,6 +278,32 @@ public enum MeetingTranscript {
 
   /// Interleaves both channels by audio time. Stable: chunks of one channel
   /// keep their order, and "You" precedes "Others" when they start together.
+  /// The transcript with one turn's text replaced: the chunks that made
+  /// the turn become one segment at its start, same channel and speaker.
+  /// An unknown turn leaves the transcript as it was.
+  public static func replacingTurn(
+    startingAt seconds: Double, channel: MeetingChannel, with text: String,
+    in segments: [MeetingSegment]
+  ) -> [MeetingSegment] {
+    var groups: [[MeetingSegment]] = []
+    for segment in merge(segments)
+    where !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      if let last = groups.last?.last, last.channel == segment.channel, last.speaker == segment.speaker {
+        groups[groups.count - 1].append(segment)
+      } else {
+        groups.append([segment])
+      }
+    }
+    guard let index = groups.firstIndex(where: {
+      $0[0].channel == channel && abs($0[0].startSeconds - seconds) < 0.001
+    }) else { return segments }
+    let first = groups[index][0]
+    groups[index] = [
+      MeetingSegment(channel: channel, startSeconds: first.startSeconds, text: text, speaker: first.speaker)
+    ]
+    return groups.flatMap { $0 }
+  }
+
   public static func merge(_ segments: [MeetingSegment]) -> [MeetingSegment] {
     segments.enumerated().sorted { lhs, rhs in
       let (l, r) = (lhs.element, rhs.element)

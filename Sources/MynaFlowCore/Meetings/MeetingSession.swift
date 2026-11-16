@@ -81,6 +81,9 @@ public actor MeetingSession {
   /// What the engine listens for, and the names near-misses are fixed to.
   private var hints: [String] = []
   private var knownNames: [String] = []
+  /// The user's approved word replacements, applied to every line.
+  private var cleaner = TranscriptCleaner()
+  private var notes: [MeetingNote] = []
   /// Opted-in voice recognition, and each speaker's samples so far.
   private var voices: MeetingVoices?
   private var voiceSamples: [Int: [SpeakerSample]] = [:]
@@ -138,9 +141,11 @@ public actor MeetingSession {
   /// `context` is the invite this meeting is for: title, attendees, agenda.
   /// `vocabulary` is the user's own terms, which the engine also listens for.
   /// `voices`, when the user opted in, recognises known voices at stop.
-  public func start(context: MeetingContext?, vocabulary: [String] = [], voices: MeetingVoices? = nil)
-    throws
-  {
+  /// `replacements` are the user's approved word fixes, shared with dictation.
+  public func start(
+    context: MeetingContext?, vocabulary: [String] = [], voices: MeetingVoices? = nil,
+    replacements: LearnedRules = LearnedRules()
+  ) throws {
     guard startedAt == nil, !stopping else { return }
     try FileManager.default.createDirectory(
       at: scratchDirectory, withIntermediateDirectories: true,
@@ -149,6 +154,8 @@ public actor MeetingSession {
     self.context = context
     hints = MeetingHints.terms(context: context, vocabulary: vocabulary)
     knownNames = (context?.others.map(\.displayName) ?? []) + vocabulary
+    cleaner = TranscriptCleaner(protectedTerms: vocabulary, learnedRules: replacements)
+    notes = []
     self.voices = voices
     voiceSamples = [:]
     cancelled = false
@@ -166,6 +173,29 @@ public actor MeetingSession {
       throw error
     }
     startedAt = now()
+  }
+
+  /// A note typed during the meeting, stamped with how much has been
+  /// recorded. False when nothing is recording or the note is blank.
+  @discardableResult
+  public func addNote(_ text: String) -> Bool {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard isRecording, !stopping, !trimmed.isEmpty else { return false }
+    notes.append(MeetingNote(kind: .note, seconds: recordedSeconds, text: trimmed))
+    return true
+  }
+
+  /// Marks what was just said (the last 40 seconds) as important.
+  @discardableResult
+  public func flagMoment() -> Bool {
+    guard isRecording, !stopping else { return false }
+    notes.append(MeetingNote(kind: .flag, seconds: recordedSeconds))
+    return true
+  }
+
+  /// Audio time so far — the clock the transcript's timestamps use.
+  private var recordedSeconds: Double {
+    tracks.values.map { $0.completedSeconds + $0.writer.durationSeconds }.max() ?? 0
   }
 
   /// Appends captured audio to a channel, rotating its chunk when full.
@@ -246,7 +276,7 @@ public actor MeetingSession {
       startedAt: startedAt, durationSeconds: duration, segments: merged, summary: nil,
       summaryNote: nil, eventTitle: context?.title, speakerNames: names, context: context,
       meetingType: type, speakerPeople: recognised.named.filter { names[$0.key] != nil },
-      speakerProfiles: profiles, speakerSuggestions: recognised.suggested)
+      speakerProfiles: profiles, speakerSuggestions: recognised.suggested, notes: notes)
     let outcome =
       summarize
       ? await summarizer.summarize(merged, context: draft.summaryContext(previous: previous))
@@ -358,8 +388,7 @@ public actor MeetingSession {
       Self.log.info("chunk \(chunk.channel.label, privacy: .public) at \(chunk.startSeconds)s: dropped as hallucination")
       return
     }
-    let text = NameCorrector.correct(
-      outcome.result.text.trimmingCharacters(in: .whitespacesAndNewlines), knownNames: knownNames)
+    let text = fixWords(outcome.result.text)
     Self.log.info(
       "chunk \(chunk.channel.label, privacy: .public) at \(chunk.startSeconds)s → \(text.count) chars")
     // Punctuation alone (a lone ".") is engine noise, not speech.
@@ -395,14 +424,19 @@ public actor MeetingSession {
       "chunk at \(chunk.startSeconds)s: \(turns.count) turns, \(voicesHeard) voices → \(pieces.count) pieces")
     for piece in pieces {
       // Split pieces are rebuilt from timed words, which skip the fix above.
-      let pieceText = NameCorrector.correct(
-        piece.text.trimmingCharacters(in: .whitespacesAndNewlines), knownNames: knownNames)
+      let pieceText = fixWords(piece.text)
       guard pieceText.contains(where: { $0.isLetter || $0.isNumber }) else { continue }
       segments.append(
         MeetingSegment(
           channel: .others, startSeconds: chunk.startSeconds + piece.start, text: pieceText,
           speaker: piece.speaker.map { speakerNumbers.number(for: $0) }))
     }
+  }
+
+  /// Near-miss names corrected, then the user's approved replacements.
+  private func fixWords(_ raw: String) -> String {
+    cleaner.replacingLearnedWords(
+      NameCorrector.correct(raw.trimmingCharacters(in: .whitespacesAndNewlines), knownNames: knownNames))
   }
 
   /// Whether a chunk's result still belongs to a live meeting.
