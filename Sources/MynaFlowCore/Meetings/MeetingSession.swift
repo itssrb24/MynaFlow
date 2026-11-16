@@ -390,7 +390,9 @@ public actor MeetingSession {
     }
     let pieces = SpeakerAlignment.pieces(
       text: text, words: outcome.result.words, duration: chunkSeconds, turns: turns)
-    Self.log.info("chunk at \(chunk.startSeconds)s: \(turns.count) turns → \(pieces.count) pieces")
+    let voicesHeard = Set(turns.map(\.speaker)).count
+    Self.log.info(
+      "chunk at \(chunk.startSeconds)s: \(turns.count) turns, \(voicesHeard) voices → \(pieces.count) pieces")
     for piece in pieces {
       // Split pieces are rebuilt from timed words, which skip the fix above.
       let pieceText = NameCorrector.correct(

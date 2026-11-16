@@ -115,7 +115,11 @@ public enum SpeakerAlignment {
   private static func merge(_ groups: [Group], words: [TimedWord]) -> [Group] {
     var current = groups
     while current.count > 1 {
-      let seconds = current.map { words[$0.range].reduce(0) { $0 + $1.duration } }
+      // A stretch's length runs from its first word's start to its last
+      // word's end. Summing word durations undercounts badly: Parakeet's
+      // timings are emission instants, so every short line read as "under a
+      // second" and whole chunks collapsed into one speaker.
+      let seconds = current.map { words[$0.range.upperBound - 1].end - words[$0.range.lowerBound].start }
       guard let short = seconds.firstIndex(where: { $0 < minPieceSeconds }) else { break }
       let target = short == 0 ? 1 : short - 1
       let (lo, hi) = (min(short, target), max(short, target))

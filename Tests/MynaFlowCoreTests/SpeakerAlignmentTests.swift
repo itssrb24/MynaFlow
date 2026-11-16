@@ -53,6 +53,20 @@ struct SpeakerAlignmentTests {
     #expect(pieces == [SpeakerPiece(text: "We should ship it now okay", start: 0, speaker: "A")])
   }
 
+  @Test("short exchanges split even when the engine's word timings are near-instant")
+  func emissionTimings() {
+    // Parakeet reports when each token was emitted, not how long it lasted:
+    // words are ~0.08 s "long" though the sentence takes over a second.
+    let words = [
+      word("Sounds", 0.0, 0.08), word("good", 0.4, 0.48), word("to", 0.7, 0.78), word("me.", 1.1, 1.18),
+      word("The", 1.6, 1.68), word("beta", 1.9, 1.98), word("date", 2.3, 2.38), word("works.", 2.8, 2.88),
+    ]
+    let pieces = SpeakerAlignment.pieces(
+      text: "Sounds good to me. The beta date works.", words: words, duration: 30,
+      turns: [turn("A", 0, 1.4), turn("B", 1.5, 3.0)])
+    #expect(pieces.map(\.speaker) == ["A", "B"])
+  }
+
   @Test("words between turns keep the speaker before them")
   func gapsInherit() {
     let words = [
