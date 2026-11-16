@@ -758,6 +758,11 @@ public actor FlowStore {
       """,
       "ALTER TABLE meetings ADD COLUMN speaker_people TEXT",
     ],
+    // v14: per-speaker voice profiles (opt-in) and voice-based suggestions.
+    [
+      "ALTER TABLE meetings ADD COLUMN speaker_profiles TEXT",
+      "ALTER TABLE meetings ADD COLUMN speaker_suggestions TEXT",
+    ],
   ]
 
   private func migrate() throws {

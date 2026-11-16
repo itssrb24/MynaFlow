@@ -86,6 +86,10 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
   public let context: MeetingContext?
   /// Which person each "Others" speaker was identified as, by number.
   public let speakerPeople: [Int: UUID]
+  /// Each speaker's voice profile — only when voices are opted in.
+  public let speakerProfiles: [SpeakerProfile]
+  /// People a speaker's voice resembles, not certain enough to name.
+  public let speakerSuggestions: [Int: UUID]
   /// The kind of meeting the summary was written for.
   public let meetingType: MeetingType?
   /// What the summary was written from (names, type, invite); when it no
@@ -104,7 +108,9 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     context: MeetingContext? = nil,
     meetingType: MeetingType? = nil,
     summaryBasis: String? = nil,
-    speakerPeople: [Int: UUID] = [:]
+    speakerPeople: [Int: UUID] = [:],
+    speakerProfiles: [SpeakerProfile] = [],
+    speakerSuggestions: [Int: UUID] = [:]
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -118,6 +124,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     self.meetingType = meetingType
     self.summaryBasis = summaryBasis
     self.speakerPeople = speakerPeople
+    self.speakerProfiles = speakerProfiles
+    self.speakerSuggestions = speakerSuggestions
   }
 
   /// A fingerprint of everything the summary depends on besides the
@@ -150,7 +158,8 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
       id: id, startedAt: startedAt, durationSeconds: durationSeconds, segments: segments,
       summary: summary, summaryNote: note, eventTitle: eventTitle, speakerNames: speakerNames,
       context: context, meetingType: type, summaryBasis: draft.currentSummaryBasis,
-      speakerPeople: speakerPeople)
+      speakerPeople: speakerPeople, speakerProfiles: speakerProfiles,
+      speakerSuggestions: speakerSuggestions)
   }
 
   /// What the summarizer needs besides the transcript.

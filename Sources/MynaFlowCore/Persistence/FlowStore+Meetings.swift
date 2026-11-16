@@ -15,6 +15,10 @@ extension FlowStore {
     }
     let names = record.speakerNames.isEmpty ? nil : try Self.encodeNames(record.speakerNames)
     let context = try record.context.map { String(decoding: try encoder.encode($0), as: UTF8.self) }
+    let profiles = record.speakerProfiles.isEmpty
+      ? nil : String(decoding: try encoder.encode(record.speakerProfiles), as: UTF8.self)
+    let suggestions = record.speakerSuggestions.isEmpty ? nil : try Self.encodeLinks(record.speakerSuggestions)
+    let people = record.speakerPeople.isEmpty ? nil : try Self.encodeLinks(record.speakerPeople)
     let decisions = try record.summary.map {
       String(decoding: try encoder.encode($0.decisions), as: UTF8.self)
     }
@@ -23,8 +27,8 @@ extension FlowStore {
       INSERT INTO meetings (
         id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
         event_title, speaker_names, context, series_key, overview, decisions, meeting_type,
-        summary_basis
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        summary_basis, speaker_people, speaker_profiles, speaker_suggestions
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
       """,
       bind: { statement in
         sqlite3_bind_text(statement, 1, record.id.uuidString, -1, transient)
@@ -42,6 +46,9 @@ extension FlowStore {
         bindText(statement, 13, decisions)
         bindText(statement, 14, record.meetingType?.rawValue)
         bindText(statement, 15, record.summaryBasis)
+        bindText(statement, 16, people)
+        bindText(statement, 17, profiles)
+        bindText(statement, 18, suggestions)
       })
     try upsertPeople(record.context?.others ?? [])
   }
@@ -108,7 +115,7 @@ extension FlowStore {
   private static let meetingColumns = """
     id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
       event_title, speaker_names, context, overview, decisions, meeting_type, summary_basis,
-      speaker_people
+      speaker_people, speaker_profiles, speaker_suggestions
     """
 
   // MARK: - People
@@ -165,11 +172,99 @@ extension FlowStore {
 
   /// Says a speaker was this person: names the speaker, records the link
   /// (voice profiles enrol through it), and teaches the name to vocabulary.
-  public func setSpeaker(_ speaker: Int, to person: Person, meetingID: UUID) throws {
+  /// With `learnVoice` (voices opted in), a clean speaker profile also
+  /// teaches the person's voice — and is taken back out of whoever it
+  /// taught before, so a correction never leaves a wrong voice behind.
+  public func setSpeaker(_ speaker: Int, to person: Person, meetingID: UUID, learnVoice: Bool = false)
+    throws
+  {
     try setSpeakerName(person.name, speaker: speaker, meetingID: meetingID)
     var links = try speakerPeople(meetingID: meetingID)
     links[speaker] = person.id
     try writeSpeakerPeople(links, meetingID: meetingID)
+    if learnVoice { try enrolVoice(of: speaker, into: person.id, meetingID: meetingID) }
+  }
+
+  // MARK: - Voices
+
+  /// A person's voice profiles (empty unless the user taught one).
+  public func voicePrints(of personID: UUID) throws -> [VoicePrint] {
+    let key = personID.uuidString
+    let stored = try query(
+      "SELECT voiceprint FROM people WHERE id = ?1",
+      bind: { sqlite3_bind_text($0, 1, key, -1, transient) },
+      row: { text($0, 0) }
+    ).first ?? nil
+    return try stored.map { try JSONDecoder().decode([VoicePrint].self, from: Data($0.utf8)) } ?? []
+  }
+
+  /// Everyone with a voice profile, as candidates for recognising a
+  /// meeting's speakers; invitees (by email) get the matcher's small nudge.
+  public func voiceCandidates(invited emails: Set<String>) throws -> [SpeakerMatch.Candidate] {
+    try query(
+      "SELECT id, email, voiceprint FROM people WHERE voiceprint IS NOT NULL",
+      bind: { _ in },
+      row: { statement in
+        guard let id = text(statement, 0).flatMap(UUID.init(uuidString:)), let json = text(statement, 2)
+        else { throw FlowStoreError(message: "malformed person row") }
+        let prints = try JSONDecoder().decode([VoicePrint].self, from: Data(json.utf8))
+        return SpeakerMatch.Candidate(
+          personID: id, voiceprints: prints, isInvited: text(statement, 1).map(emails.contains) ?? false)
+      }
+    ).filter { !$0.voiceprints.isEmpty }
+  }
+
+  /// Deletes every voice profile and every meeting's stored speaker samples.
+  public func forgetAllVoices() throws {
+    try run("UPDATE people SET voiceprint = NULL, voiceprint_samples = 0", bind: { _ in })
+    try run("UPDATE meetings SET speaker_profiles = NULL, speaker_suggestions = NULL", bind: { _ in })
+  }
+
+  private func writeVoicePrints(_ prints: [VoicePrint], of personID: UUID) throws {
+    let json = prints.isEmpty ? nil : String(decoding: try JSONEncoder().encode(prints), as: UTF8.self)
+    let key = personID.uuidString
+    try run(
+      "UPDATE people SET voiceprint = ?1, voiceprint_samples = ?2 WHERE id = ?3",
+      bind: { statement in
+        bindText(statement, 1, json)
+        sqlite3_bind_int(statement, 2, Int32(prints.map(\.sampleCount).reduce(0, +)))
+        sqlite3_bind_text(statement, 3, key, -1, transient)
+      })
+  }
+
+  private func writeProfiles(_ profiles: [SpeakerProfile], meetingID: UUID) throws {
+    let json = profiles.isEmpty ? nil : String(decoding: try JSONEncoder().encode(profiles), as: UTF8.self)
+    let key = meetingID.uuidString
+    try run(
+      "UPDATE meetings SET speaker_profiles = ?1 WHERE id = ?2",
+      bind: { statement in
+        bindText(statement, 1, json)
+        sqlite3_bind_text(statement, 2, key, -1, transient)
+      })
+  }
+
+  /// Teaches `personID` this speaker's voice when its profile is clean,
+  /// first taking it back out of anyone it taught before (Myna's exact
+  /// inverse), and records who it taught.
+  private func enrolVoice(of speaker: Int, into personID: UUID?, meetingID: UUID) throws {
+    guard let meeting = try meeting(id: meetingID),
+      var profile = meeting.speakerProfiles.first(where: { $0.speaker == speaker })
+    else { return }
+    if let previous = profile.enrolledPerson {
+      guard previous != personID else { return }
+      let reduced = SpeakerMatch.unenroll(
+        embedding: profile.embedding, channel: .remote, from: try voicePrints(of: previous), at: Date())
+      try writeVoicePrints(reduced, of: previous)
+      profile.enrolledPerson = nil
+    }
+    if let personID, profile.quality.allowsEnrollment {
+      let grown = SpeakerMatch.enroll(
+        embedding: profile.embedding, channel: .remote, into: try voicePrints(of: personID), at: Date())
+      try writeVoicePrints(grown, of: personID)
+      profile.enrolledPerson = personID
+    }
+    let others = meeting.speakerProfiles.filter { $0.speaker != speaker }
+    try writeProfiles((others + [profile]).sorted { $0.speaker < $1.speaker }, meetingID: meetingID)
   }
 
   /// "Same person": every line of `from` becomes `into`'s, and `from`'s name
@@ -208,9 +303,13 @@ extension FlowStore {
     try meeting(id: meetingID)?.speakerPeople ?? [:]
   }
 
-  private func writeSpeakerPeople(_ links: [Int: UUID], meetingID: UUID) throws {
+  private static func encodeLinks(_ links: [Int: UUID]) throws -> String {
     let byKey = Dictionary(uniqueKeysWithValues: links.map { (String($0.key), $0.value.uuidString) })
-    let json = links.isEmpty ? nil : String(decoding: try JSONEncoder().encode(byKey), as: UTF8.self)
+    return String(decoding: try JSONEncoder().encode(byKey), as: UTF8.self)
+  }
+
+  private func writeSpeakerPeople(_ links: [Int: UUID], meetingID: UUID) throws {
+    let json = links.isEmpty ? nil : try Self.encodeLinks(links)
     let key = meetingID.uuidString
     try run(
       "UPDATE meetings SET speaker_people = ?1 WHERE id = ?2",
@@ -252,6 +351,8 @@ extension FlowStore {
     // A new name means a new identity; setSpeaker re-links when it's a person.
     var links = try speakerPeople(meetingID: meetingID)
     if links.removeValue(forKey: speaker) != nil { try writeSpeakerPeople(links, meetingID: meetingID) }
+    // Whatever voice this speaker taught goes with the old name.
+    try enrolVoice(of: speaker, into: nil, meetingID: meetingID)
   }
 
   // JSON object keys are strings; speaker numbers become "1", "2", ….
@@ -317,7 +418,11 @@ extension FlowStore {
       },
       meetingType: text(statement, 12).flatMap(MeetingType.init(rawValue:)),
       summaryBasis: text(statement, 13),
-      speakerPeople: try text(statement, 14).map(decodePeople) ?? [:])
+      speakerPeople: try text(statement, 14).map(decodePeople) ?? [:],
+      speakerProfiles: try text(statement, 15).map {
+        try decoder.decode([SpeakerProfile].self, from: Data($0.utf8))
+      } ?? [],
+      speakerSuggestions: try text(statement, 16).map(decodePeople) ?? [:])
   }
 }
 
