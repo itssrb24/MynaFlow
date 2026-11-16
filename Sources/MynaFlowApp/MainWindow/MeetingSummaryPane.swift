@@ -50,6 +50,14 @@ struct MeetingSummaryPane: View {
       } else {
         missing(meeting.summaryNote ?? "This meeting has no summary.")
       }
+      let typed = meeting.notes.filter { $0.kind == .note }
+      if !typed.isEmpty {
+        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+          SectionLabel(text: "Your notes")
+          ForEach(Array(typed.enumerated()), id: \.offset) { _, note in NoteMarker(note: note) }
+        }
+        .textSelection(.enabled)
+      }
     }
   }
 

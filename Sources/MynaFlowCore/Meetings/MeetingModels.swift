@@ -360,6 +360,12 @@ public enum MeetingExporter {
     } else if let note = meeting.summaryNote {
       sections.append("> \(note)")
     }
+    let typed = meeting.notes.filter { $0.kind == .note }
+    if !typed.isEmpty {
+      sections.append(
+        "## Your notes\n"
+          + typed.map { "- [\(MeetingTranscript.timestamp($0.seconds))] \($0.text ?? "")" }.joined(separator: "\n"))
+    }
     sections.append("## Transcript\n" + meeting.transcriptText)
     return sections.joined(separator: "\n\n") + "\n"
   }

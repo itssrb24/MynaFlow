@@ -126,6 +126,7 @@ struct TranscriptBody: View {
   /// The turn being edited, by its start time and channel.
   @State private var editing: TurnKey?
   @State private var draft = ""
+  @State private var hovered: TurnKey?
 
   private struct TurnKey: Equatable {
     let channel: MeetingChannel
@@ -208,6 +209,17 @@ struct TranscriptBody: View {
             .font(Theme.Fonts.mono)
             .monospacedDigit()
             .foregroundStyle(Theme.Colors.textTertiary)
+          if editing == nil {
+            let key = TurnKey(channel: turn.channel, seconds: turn.startSeconds)
+            Button { startEditing(turn) } label: {
+              Image(systemName: "pencil")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(hovered == key ? Theme.Colors.textSecondary : Theme.Colors.textTertiary.opacity(0.5))
+            }
+            .buttonStyle(.plain)
+            .help("Fix this line — names you correct are learned")
+            .accessibilityLabel("Edit this line")
+          }
         }
         if editing == TurnKey(channel: turn.channel, seconds: turn.startSeconds) {
           editor(turn)
@@ -217,15 +229,15 @@ struct TranscriptBody: View {
             .lineSpacing(Theme.Fonts.readingLineSpacing)
             .foregroundStyle(Theme.Colors.textPrimary)
             .fixedSize(horizontal: false, vertical: true)
-            .onTapGesture(count: 2) { startEditing(turn) }
-            .contextMenu {
-              Button("Edit Text…") { startEditing(turn) }
-            }
-            .help("Double-click to fix a word — names you correct are learned")
         }
       }
     }
-    .accessibilityElement(children: .combine)
+    .contentShape(Rectangle())
+    .onHover { inside in
+      let key = TurnKey(channel: turn.channel, seconds: turn.startSeconds)
+      if inside { hovered = key } else if hovered == key { hovered = nil }
+    }
+    .accessibilityElement(children: .contain)
   }
 
   private func startEditing(_ turn: MeetingTurn) {

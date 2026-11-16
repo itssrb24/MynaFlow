@@ -173,3 +173,15 @@ struct MeetingLearningStoreTests {
     await store.close()
   }
 }
+
+@Suite("Exporting notes")
+struct MeetingNotesExportTests {
+  @Test("the export lists the user's notes with their times; flags aren't notes")
+  func export() {
+    let record = MeetingRecord(
+      startedAt: Date(), durationSeconds: 60, segments: [], summary: nil, summaryNote: nil,
+      notes: [MeetingNote(kind: .note, seconds: 75, text: "Follow up on pricing"), MeetingNote(kind: .flag, seconds: 80)])
+    let markdown = MeetingExporter.markdown(record)
+    #expect(markdown.contains("## Your notes\n- [01:15] Follow up on pricing\n\n"))
+  }
+}
