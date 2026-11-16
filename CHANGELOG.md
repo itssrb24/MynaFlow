@@ -3,6 +3,33 @@
 All notable changes to Myna Flow. Versions follow the app's
 `CFBundleShortVersionString`.
 
+## 1.4.0
+
+### Meetings that know their calendar invite
+- **The invite travels with the meeting:** attendees, organizer, the agenda
+  (the invite's notes without the video-call footer) and the recurring series.
+  The meeting page shows who was invited and the agenda; a meeting recorded
+  without one can be linked to a calendar event afterwards. Notes started by
+  hand find the meeting in progress even with calendar prompts off.
+- **Transcription knows the names:** the speech engine listens for the people
+  on the invite, your vocabulary, and names in the invite; tiny misspellings
+  of those names are corrected; words invented over near-silence are dropped.
+- **Better summaries:** an overview, decisions, key points and action items as
+  "Owner — task" — owners are never invented. The summary knows the title,
+  attendees, agenda, speaker names and what was still open from the last
+  meeting in the series. The meeting type (1:1, standup, planning, review,
+  client, interview) is read from the invite and tunes the summary; change it
+  to rewrite. **Update summary** rewrites from the saved transcript after you
+  name speakers.
+- **Name speakers from the invite:** a speaker's menu suggests the people on
+  the invite first, then names from the last meeting in the series; search
+  people you've met; "Same person as…" merges a speaker split in two. Names
+  you confirm are learned as vocabulary.
+
+### Fixes
+- Teams dial-in footers are not mistaken for an agenda; directory names like
+  "Rivera, Ana" read "Ana Rivera".
+
 ## 1.3.0
 
 ### New

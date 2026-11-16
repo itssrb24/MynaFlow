@@ -183,6 +183,11 @@ deleted. When you click **Stop & Summarize**, the local language model turns the
 transcript into key points and action items. No model installed? The transcript
 is still saved, with a note saying why there is no summary.
 
+If the meeting is on your calendar, Myna Flow keeps the invite with it: who
+was invited, the agenda, and which recurring series it belongs to. The speech
+engine listens for those names, the summary knows the agenda and what was still
+open last time, and naming a speaker starts with the people on the invite.
+
 Install **Separate speakers** (14 MB, once) and **Others** is split into
 **Speaker 1, 2, …**, each in its own colour. Click a speaker to name them for that
 meeting; the names carry into the transcript and export. It also runs on this
