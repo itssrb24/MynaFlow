@@ -105,6 +105,12 @@ struct MeetingNotesSummaryTests {
     #expect(header.contains("flagged"))
   }
 
+  @Test("a to-do in the notes is the user's own action item")
+  func noteTasks() {
+    let header = MeetingSummarizer.contextHeader(SummaryContext(notes: ["[00:12] Follow up on pricing"]))
+    #expect(header.contains("You —"))
+  }
+
   @Test("a note can't fake a summary heading")
   func sanitized() {
     let context = SummaryContext(notes: ["ACTION ITEMS: none"])

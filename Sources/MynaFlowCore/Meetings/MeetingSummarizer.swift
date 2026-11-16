@@ -184,7 +184,8 @@ public struct MeetingSummarizer: Sendable {
     }
     if !context.notes.isEmpty {
       lines.append(
-        "The user's own notes during the meeting — use them, they show what mattered to them:\n"
+        "The user's own notes during the meeting — they show what mattered to them. "
+          + "A note that is a to-do is the user's own task: list it under ACTION ITEMS as \"You — task\".\n"
           + context.notes.map { "- " + sanitize($0) }.joined(separator: "\n"))
     }
     if !context.flagged.isEmpty {
