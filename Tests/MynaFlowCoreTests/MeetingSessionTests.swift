@@ -562,6 +562,47 @@ struct MeetingSessionTests {
     #expect(record.segments.map(\.text) == ["I asked Kokotajlo about it."])
   }
 
+  @Test("with voices on, a known voice is named at stop and profiles are kept; off, nothing is kept")
+  func voicesRecognised() async throws {
+    var known = [Float](repeating: 0, count: 8)
+    known[2] = 1
+    let turnsWithVoice = (0..<25).map { index -> SpeakerTurn in
+      var v = known
+      v[(index % 7) + 1 == 2 ? 3 : (index % 7) + 1] += 0.03 * Float(index % 5)
+      return SpeakerTurn(speaker: "spk_1", start: Double(index) * 0.1, end: Double(index) * 0.1 + 0.1, embedding: v)
+    }
+    let maurice = UUID()
+    let candidates = [
+      SpeakerMatch.Candidate(
+        personID: maurice,
+        voiceprints: [VoicePrint(embedding: known, channel: .remote, sampleCount: 4, updatedAt: Date())],
+        isInvited: true)
+    ]
+    for voicesOn in [true, false] {
+      let scratch = try makeScratch()
+      let diarizer = FakeDiarizer()
+      await diarizer.setTurns(["others#0": turnsWithVoice])
+      let store = FakeMeetingStore()
+      let session = makeSession(
+        transcriber: ChunkNamingTranscriber(), store: store, scratch: scratch, diarizer: diarizer)
+      try await session.start(
+        context: nil,
+        voices: voicesOn ? MeetingVoices(candidates: candidates, names: [maurice: "Maurice Lee"]) : nil)
+      await session.append(frame(seconds: 1), channel: .others)
+      guard case .saved(let record) = await session.stop() else {
+        Issue.record("expected saved")
+        return
+      }
+      if voicesOn {
+        #expect(record.speakerProfiles.count == 1)
+        #expect(record.speakerNames[1] == "Maurice Lee" || record.speakerSuggestions[1] == maurice)
+      } else {
+        #expect(record.speakerProfiles.isEmpty)
+        #expect(record.speakerNames.isEmpty)
+      }
+    }
+  }
+
   @Test("the summary knows the meeting type and the last meeting in its series")
   func seriesAndType() async throws {
     let scratch = try makeScratch()

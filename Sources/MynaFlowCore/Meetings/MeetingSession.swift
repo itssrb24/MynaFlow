@@ -81,6 +81,9 @@ public actor MeetingSession {
   /// What the engine listens for, and the names near-misses are fixed to.
   private var hints: [String] = []
   private var knownNames: [String] = []
+  /// Opted-in voice recognition, and each speaker's samples so far.
+  private var voices: MeetingVoices?
+  private var voiceSamples: [Int: [SpeakerSample]] = [:]
   private var tracks: [MeetingChannel: ChannelTrack] = [:]
   private var completedChunks: [MeetingChannel: Int] = [:]
   /// Chunk files written but not yet deleted, so cancel can remove them
@@ -134,7 +137,10 @@ public actor MeetingSession {
 
   /// `context` is the invite this meeting is for: title, attendees, agenda.
   /// `vocabulary` is the user's own terms, which the engine also listens for.
-  public func start(context: MeetingContext?, vocabulary: [String] = []) throws {
+  /// `voices`, when the user opted in, recognises known voices at stop.
+  public func start(context: MeetingContext?, vocabulary: [String] = [], voices: MeetingVoices? = nil)
+    throws
+  {
     guard startedAt == nil, !stopping else { return }
     try FileManager.default.createDirectory(
       at: scratchDirectory, withIntermediateDirectories: true,
@@ -143,6 +149,8 @@ public actor MeetingSession {
     self.context = context
     hints = MeetingHints.terms(context: context, vocabulary: vocabulary)
     knownNames = (context?.others.map(\.displayName) ?? []) + vocabulary
+    self.voices = voices
+    voiceSamples = [:]
     cancelled = false
     writeFailure = nil
     untranscribedChunks = 0
@@ -226,9 +234,19 @@ public actor MeetingSession {
       previous = PreviousMeeting(
         overview: last.summary?.overview, openActions: last.summary?.actionItems ?? [])
     }
+    // Known voices are named before summarizing, so the summary uses them.
+    var profiles: [SpeakerProfile] = []
+    var recognised = VoiceRecognition.Result()
+    if let voices {
+      profiles = SpeakerProfiler.profiles(from: voiceSamples)
+      recognised = VoiceRecognition.recognise(profiles, candidates: voices.candidates)
+    }
+    let names = recognised.named.compactMapValues { voices?.names[$0] }
     let draft = MeetingRecord(
       startedAt: startedAt, durationSeconds: duration, segments: merged, summary: nil,
-      summaryNote: nil, eventTitle: context?.title, context: context, meetingType: type)
+      summaryNote: nil, eventTitle: context?.title, speakerNames: names, context: context,
+      meetingType: type, speakerPeople: recognised.named.filter { names[$0.key] != nil },
+      speakerProfiles: profiles, speakerSuggestions: recognised.suggested)
     let outcome =
       summarize
       ? await summarizer.summarize(merged, context: draft.summaryContext(previous: previous))
@@ -362,6 +380,14 @@ public actor MeetingSession {
       turns = []
     }
     guard isCurrent(chunk) else { return }
+    if voices != nil {
+      // Numbers only — the samples become a profile at stop; audio is still deleted.
+      for turn in turns {
+        guard let embedding = turn.embedding, turn.end > turn.start else { continue }
+        voiceSamples[speakerNumbers.number(for: turn.speaker), default: []]
+          .append(SpeakerSample(embedding: embedding, seconds: turn.end - turn.start))
+      }
+    }
     let pieces = SpeakerAlignment.pieces(
       text: text, words: outcome.result.words, duration: chunkSeconds, turns: turns)
     Self.log.info("chunk at \(chunk.startSeconds)s: \(turns.count) turns → \(pieces.count) pieces")

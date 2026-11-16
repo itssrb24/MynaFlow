@@ -69,6 +69,8 @@ final class MeetingRecorder {
   @ObservationIgnored private var currentModel: () -> (any LocalLanguageModel)? = { nil }
   /// A fresh speaker diarizer per meeting, or nil to keep "Others" whole.
   @ObservationIgnored private var makeDiarizer: () async -> (any SpeakerDiarizing)? = { nil }
+  /// Known voices for a meeting when the user opted in; nil otherwise.
+  @ObservationIgnored private var meetingVoices: (Set<String>) async -> MeetingVoices? = { _ in nil }
   /// The calendar meeting happening now, for notes started by hand. Set by
   /// the detection controller; nil while calendar prompts are off.
   @ObservationIgnored var currentCalendarMeeting: () -> CalendarMeeting? = { nil }
@@ -79,9 +81,11 @@ final class MeetingRecorder {
     recoveryDirectory: URL,
     transcriber: @escaping () -> (any TranscriptionProviding)?,
     model: @escaping () -> (any LocalLanguageModel)?,
-    diarizer: @escaping () async -> (any SpeakerDiarizing)? = { nil }
+    diarizer: @escaping () async -> (any SpeakerDiarizing)? = { nil },
+    voices: @escaping (Set<String>) async -> MeetingVoices? = { _ in nil }
   ) async {
     makeDiarizer = diarizer
+    meetingVoices = voices
     self.store = store
     self.scratch = scratch
     self.recoveryDirectory = recoveryDirectory
@@ -139,9 +143,10 @@ final class MeetingRecorder {
     do {
       // The user's vocabulary joins the invite's names as engine hints.
       let vocabulary = (try? await store.vocabularyTerms().map(\.term)) ?? []
+      let context = (meeting ?? currentCalendarMeeting()).map(MeetingContext.init)
+      let invited = Set(context?.others.compactMap(\.email) ?? [])
       try await session.start(
-        context: (meeting ?? currentCalendarMeeting()).map(MeetingContext.init),
-        vocabulary: vocabulary)
+        context: context, vocabulary: vocabulary, voices: await meetingVoices(invited))
       guard phase == .starting else {
         // Cancelled while the session was opening; close what it opened.
         await session.cancel()
@@ -360,7 +365,9 @@ final class MeetingRecorder {
       } else if let store {
         // Invitees are already people under their names; a new name becomes one.
         let person = try await store.person(named: trimmed)
-        try await store.setSpeaker(speaker, to: person, meetingID: meeting.id)
+        // With voices opted in, confirming a name teaches that voice.
+        let learn = await meetingVoices([]) != nil
+        try await store.setSpeaker(speaker, to: person, meetingID: meeting.id, learnVoice: learn)
       }
     } catch {
       post("Could not rename the speaker: \(error.localizedDescription)", .error)

@@ -29,7 +29,8 @@ actor MeetingDiarizer: SpeakerDiarizing {
     )
     return result.segments.map {
       SpeakerTurn(
-        speaker: $0.speakerId, start: Double($0.startTimeSeconds), end: Double($0.endTimeSeconds))
+        speaker: $0.speakerId, start: Double($0.startTimeSeconds), end: Double($0.endTimeSeconds),
+        embedding: $0.embedding.isEmpty ? nil : $0.embedding)
     }
   }
 
@@ -66,6 +67,10 @@ final class SpeakerSeparation {
 
   private(set) var state: State = .notInstalled
   private(set) var isEnabled = false
+  /// Opt-in: remember voices of people the user names, and recognise them
+  /// in later meetings. Off by default.
+  private(set) var recognisesVoices = false
+  static let voicesKey = "recognise_voices"
 
   @ObservationIgnored private var directory: URL?
   @ObservationIgnored private var store: FlowStore?
@@ -77,6 +82,7 @@ final class SpeakerSeparation {
     state = filesPresent ? .installed : .notInstalled
     let saved = try? await store.setting(forKey: Self.settingKey)
     isEnabled = state == .installed && saved != "0"
+    recognisesVoices = (try? await store.setting(forKey: Self.voicesKey)) == "1"
   }
 
   /// Explicit, user-approved download from huggingface.co (pinned), then on.
@@ -96,6 +102,28 @@ final class SpeakerSeparation {
         state = .failed("Couldn't download the speaker models. Check your connection and try again.")
       }
     }
+  }
+
+  func setRecognisesVoices(_ on: Bool) {
+    recognisesVoices = on
+    Task { try? await store?.setSetting(on ? "1" : "0", forKey: Self.voicesKey) }
+  }
+
+  /// Deletes every voice profile and stored speaker sample, and turns
+  /// recognition off.
+  func forgetAllVoices() async {
+    try? await store?.forgetAllVoices()
+    setRecognisesVoices(false)
+  }
+
+  /// What a meeting needs to recognise known voices, when opted in.
+  func meetingVoices(invited emails: Set<String>) async -> MeetingVoices? {
+    guard isEnabled, recognisesVoices, let store else { return nil }
+    let candidates = (try? await store.voiceCandidates(invited: emails)) ?? []
+    let people = (try? await store.people()) ?? []
+    return MeetingVoices(
+      candidates: candidates,
+      names: Dictionary(uniqueKeysWithValues: people.map { ($0.id, $0.name) }))
   }
 
   func setEnabled(_ enabled: Bool) {

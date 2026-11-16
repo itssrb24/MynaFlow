@@ -274,6 +274,8 @@ struct SpeakerNaming {
   var name: (Int, String) -> Void = { _, _ in }
   /// "Same person": the first speaker's lines become the second's.
   var merge: (Int, Int) -> Void = { _, _ in }
+  /// Whose voice a speaker resembles, when not sure enough to name them.
+  var soundsLike: (Int) -> String? = { _ in nil }
 }
 
 /// Who spoke. An "Others" speaker's chip opens naming: one click on a
@@ -322,6 +324,10 @@ struct SpeakerChip: View {
     let others = Set(meeting.segments.compactMap(\.speaker)).subtracting([speaker]).sorted()
     return VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
       Text("Who is \(label)?").font(Theme.Fonts.bodyStrong)
+      if let likely = naming.soundsLike(speaker), current == nil, draft.isEmpty {
+        SectionLabel(text: "Sounds like")
+        choice(likely, systemImage: "waveform") { pick(likely, speaker: speaker) }
+      }
       if !naming.suggestions.isEmpty && draft.isEmpty {
         SectionLabel(text: "In this meeting")
         ForEach(naming.suggestions.prefix(6), id: \.self) { name in

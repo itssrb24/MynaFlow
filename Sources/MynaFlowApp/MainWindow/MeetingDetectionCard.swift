@@ -96,8 +96,53 @@ struct MeetingDetectionCard: View {
 /// switch. Says plainly that audio is still never kept.
 struct SpeakerSeparationCard: View {
   let speakers: SpeakerSeparation
+  @State private var confirmForget = false
 
   var body: some View {
+    VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+      separationRow
+      if speakers.state == .installed && speakers.isEnabled { voicesRow }
+    }
+    .tint(Theme.Colors.accent)
+    .raised()
+    .confirmationDialog(
+      "Forget all voices?", isPresented: $confirmForget, titleVisibility: .visible
+    ) {
+      Button("Forget all voices", role: .destructive) { Task { await speakers.forgetAllVoices() } }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("Every voice profile and stored speaker sample is deleted from this Mac, and recognising voices turns off. Names you gave speakers stay.")
+    }
+  }
+
+  /// Opt-in: remember the voices of people you name.
+  private var voicesRow: some View {
+    HStack(alignment: .center, spacing: Theme.Spacing.md) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Recognise voices across meetings")
+          .font(Theme.Fonts.bodyStrong)
+          .foregroundStyle(Theme.Colors.textPrimary)
+        Text("Stores a voice profile — numbers, not audio — for people you name, and names them next time when it's sure. Never leaves this Mac.")
+          .font(Theme.Fonts.caption)
+          .foregroundStyle(Theme.Colors.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      Spacer(minLength: Theme.Spacing.md)
+      Button("Forget all…") { confirmForget = true }
+        .buttonStyle(.plain)
+        .font(Theme.Fonts.caption)
+        .foregroundStyle(Theme.Colors.danger)
+        .help("Delete every voice profile")
+      Toggle(
+        "Recognise voices across meetings",
+        isOn: Binding(get: { speakers.recognisesVoices }, set: { speakers.setRecognisesVoices($0) })
+      )
+      .labelsHidden()
+      .toggleStyle(.switch)
+    }
+  }
+
+  private var separationRow: some View {
     HStack(alignment: .center, spacing: Theme.Spacing.md) {
       VStack(alignment: .leading, spacing: 2) {
         Text("Separate speakers")
@@ -111,8 +156,6 @@ struct SpeakerSeparationCard: View {
       Spacer(minLength: Theme.Spacing.md)
       control
     }
-    .tint(Theme.Colors.accent)
-    .raised()
   }
 
   @ViewBuilder

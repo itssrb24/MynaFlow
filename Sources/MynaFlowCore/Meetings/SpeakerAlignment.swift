@@ -13,11 +13,14 @@ public struct SpeakerTurn: Equatable, Sendable {
   public let speaker: String
   public let start: Double
   public let end: Double
+  /// The turn's voice embedding, used only when voices are opted in.
+  public let embedding: [Float]?
 
-  public init(speaker: String, start: Double, end: Double) {
+  public init(speaker: String, start: Double, end: Double, embedding: [Float]? = nil) {
     self.speaker = speaker
     self.start = start
     self.end = end
+    self.embedding = embedding
   }
 }
 

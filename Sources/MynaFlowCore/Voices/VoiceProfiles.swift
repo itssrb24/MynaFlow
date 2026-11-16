@@ -1,5 +1,17 @@
 import Foundation
 
+/// Recognising voices for one meeting: the people with a voice profile and
+/// their names. Present only when the user opted in.
+public struct MeetingVoices: Sendable {
+  public let candidates: [SpeakerMatch.Candidate]
+  public let names: [UUID: String]
+
+  public init(candidates: [SpeakerMatch.Candidate], names: [UUID: String]) {
+    self.candidates = candidates
+    self.names = names
+  }
+}
+
 /// One diarized turn of a speaker: its voice embedding and how long it ran.
 public struct SpeakerSample: Equatable, Sendable {
   public let embedding: [Float]

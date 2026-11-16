@@ -391,7 +391,8 @@ final class AppCoordinator {
         guard let self, self.polishModelInstalled, let provider = self.languageProvider else { return nil }
         return provider
       },
-      diarizer: { [weak self] in await self?.speakers.makeDiarizer() })
+      diarizer: { [weak self] in await self?.speakers.makeDiarizer() },
+      voices: { [weak self] invited in await self?.speakers.meetingVoices(invited: invited) })
   }
 
   private func transcriptionProvider() -> any TranscriptionProviding {

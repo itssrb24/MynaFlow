@@ -25,7 +25,10 @@ struct MeetingsView: View {
             suggestions: SpeakerSuggestions.names(for: meeting, previous: recorder.previousInSeries(meeting)),
             people: recorder.people,
             name: { speaker, name in Task { await recorder.renameSpeaker(speaker, to: name, in: meeting) } },
-            merge: { from, into in Task { await recorder.mergeSpeaker(from, into: into, in: meeting) } }),
+            merge: { from, into in Task { await recorder.mergeSpeaker(from, into: into, in: meeting) } },
+            soundsLike: { speaker in
+              meeting.speakerSuggestions[speaker].flatMap { id in recorder.people.first { $0.id == id }?.name }
+            }),
           linkCandidates: {
             detection.calendar.meetings(
               from: meeting.startedAt.addingTimeInterval(-3 * 3600),
