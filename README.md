@@ -194,6 +194,17 @@ meeting; the names carry into the transcript and export. It also runs on this
 Mac, on each 30-second chunk just before that chunk is deleted, so audio is still
 never kept.
 
+Opt in to **Recognise voices across meetings** and the people you name are
+recognised next time: Myna Flow keeps a voice profile &mdash; numbers, not audio
+&mdash; for each, names a confident match for you and suggests a close one.
+**Forget all…** deletes every profile.
+
+While recording, jot a note or **flag the moment** (a button, the menu bar, or
+a hotkey you pick): notes appear in the transcript and under the summary, and
+flagged moments &mdash; the 40 seconds before each flag &mdash; are what the summary
+makes sure to cover. Fix a word in the transcript with its pencil and the names
+you correct are learned for next time.
+
 It can also ask for you. Turn on detection and Myna Flow offers to take notes
 when a calendar meeting is about to start, or when Zoom, Teams, FaceTime,
 Webex, Slack, Discord or a browser starts using the mic. It only ever asks:

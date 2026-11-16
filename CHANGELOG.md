@@ -3,6 +3,43 @@
 All notable changes to Myna Flow. Versions follow the app's
 `CFBundleShortVersionString`.
 
+## 1.5.0
+
+### Notes and flags during a meeting
+- **Jot a note while recording** — in the field on the Meetings page, or from
+  the menu bar with **Add Meeting Note…**. Notes are stamped with the meeting's
+  time, appear in the transcript where you wrote them, are listed as **Your
+  notes** under the summary and in Markdown export, and the summary is told
+  about them.
+- **Flag a moment:** **Flag moment** on the Meetings page, **Flag This Moment**
+  in the menu bar, or a hotkey you choose (Hotkeys ▸ Flag meeting moment). It
+  marks the 40 seconds before it as important, and the summary makes sure to
+  cover them.
+
+### Fix a line, and it's learned
+- Click the pencil beside a transcript line to fix it. Names you correct are
+  added to your vocabulary, so they're heard right next time, and the fix is
+  suggested on the Learning page as a replacement rule.
+- Approved replacement rules now apply to meeting transcripts too, not only to
+  dictation.
+
+### Recognise voices across meetings (opt-in, off by default)
+- Turn on **Recognise voices across meetings** in the Separate speakers card.
+  When you name a speaker, Myna Flow keeps a voice profile — numbers, not
+  audio — for that person. In later meetings a confident match is named for
+  you; a weaker one is suggested ("Sounds like …").
+- A speaker whose voice looks like two people mixed together is never learned
+  or auto-named. Renaming a speaker moves what was learned to the right
+  person. **Forget all…** deletes every voice profile.
+
+### Fixes
+- Speaker changes in short back-and-forth exchanges are no longer merged into
+  one line.
+
+### Known limits
+- Very similar voices (for example two synthetic voices) can be heard as one
+  speaker; recognition then stays off for that speaker rather than guess.
+
 ## 1.4.0
 
 ### Meetings that know their calendar invite
