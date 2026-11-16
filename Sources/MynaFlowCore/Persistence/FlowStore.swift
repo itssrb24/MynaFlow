@@ -735,6 +735,14 @@ public actor FlowStore {
       "ALTER TABLE meetings ADD COLUMN series_key TEXT",
       "CREATE INDEX idx_meetings_series ON meetings(series_key, started_at)",
     ],
+    // v12: the summary's overview and decisions, the meeting type it was
+    // written for, and what it was written from (to tell when it's stale).
+    [
+      "ALTER TABLE meetings ADD COLUMN overview TEXT",
+      "ALTER TABLE meetings ADD COLUMN decisions TEXT",
+      "ALTER TABLE meetings ADD COLUMN meeting_type TEXT",
+      "ALTER TABLE meetings ADD COLUMN summary_basis TEXT",
+    ],
   ]
 
   private func migrate() throws {

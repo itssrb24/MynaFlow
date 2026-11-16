@@ -17,6 +17,8 @@ struct MeetingDetailView: View {
   /// Calendar events near this meeting's start, for linking one after the fact.
   let linkCandidates: () -> [CalendarMeeting]
   let link: (CalendarMeeting) -> Void
+  let isResummarizing: Bool
+  let resummarize: (MeetingType?) -> Void
 
   @State private var tab: Tab
   @State private var find: TranscriptFind
@@ -31,8 +33,12 @@ struct MeetingDetailView: View {
     export: @escaping () -> Void, copy: @escaping () -> Void, delete: @escaping () -> Void,
     rename: @escaping (Int, String) -> Void,
     linkCandidates: @escaping () -> [CalendarMeeting] = { [] },
-    link: @escaping (CalendarMeeting) -> Void = { _ in }
+    link: @escaping (CalendarMeeting) -> Void = { _ in },
+    isResummarizing: Bool = false,
+    resummarize: @escaping (MeetingType?) -> Void = { _ in }
   ) {
+    self.isResummarizing = isResummarizing
+    self.resummarize = resummarize
     self.rename = rename
     self.linkCandidates = linkCandidates
     self.link = link
@@ -147,7 +153,7 @@ struct MeetingDetailView: View {
   private func content(proxy: ScrollViewProxy) -> some View {
     switch tab {
     case .summary:
-      MeetingSummaryPane(meeting: meeting) {
+      MeetingSummaryPane(meeting: meeting, isUpdating: isResummarizing, update: resummarize) {
         withAnimation(reduceMotion ? nil : Theme.Motion.ease) { tab = .transcript }
       }
       .transition(.opacity)

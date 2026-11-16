@@ -27,7 +27,9 @@ struct MeetingsView: View {
               from: meeting.startedAt.addingTimeInterval(-3 * 3600),
               to: meeting.startedAt.addingTimeInterval(3 * 3600))
           },
-          link: { event in Task { await recorder.link(meeting, to: event) } })
+          link: { event in Task { await recorder.link(meeting, to: event) } },
+          isResummarizing: recorder.resummarizing == meeting.id,
+          resummarize: { type in Task { await recorder.resummarize(meeting, as: type) } })
         .transition(.opacity.combined(with: .offset(x: 16)))
       } else {
         listPage.transition(.opacity)

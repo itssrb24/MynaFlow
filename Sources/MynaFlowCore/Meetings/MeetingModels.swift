@@ -43,12 +43,29 @@ public struct MeetingSegment: Codable, Equatable, Sendable {
 }
 
 public struct MeetingSummary: Codable, Equatable, Sendable {
+  /// Two or three sentences on what the meeting was about and concluded.
+  public let overview: String?
+  public let decisions: [String]
   public let keyPoints: [String]
+  /// "Owner — task", with "Unassigned" when nobody said who.
   public let actionItems: [String]
 
-  public init(keyPoints: [String], actionItems: [String]) {
+  public init(
+    overview: String? = nil, decisions: [String] = [], keyPoints: [String], actionItems: [String]
+  ) {
+    self.overview = overview
+    self.decisions = decisions
     self.keyPoints = keyPoints
     self.actionItems = actionItems
+  }
+
+  // Summaries saved before overview and decisions existed decode with neither.
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    overview = try container.decodeIfPresent(String.self, forKey: .overview)
+    decisions = try container.decodeIfPresent([String].self, forKey: .decisions) ?? []
+    keyPoints = try container.decode([String].self, forKey: .keyPoints)
+    actionItems = try container.decode([String].self, forKey: .actionItems)
   }
 }
 
@@ -67,6 +84,11 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
   public let speakerNames: [Int: String]
   /// The invite the meeting was recorded for: attendees, agenda, series.
   public let context: MeetingContext?
+  /// The kind of meeting the summary was written for.
+  public let meetingType: MeetingType?
+  /// What the summary was written from (names, type, invite); when it no
+  /// longer matches, the summary is out of date.
+  public let summaryBasis: String?
 
   public init(
     id: UUID = UUID(),
@@ -77,7 +99,9 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     summaryNote: String?,
     eventTitle: String? = nil,
     speakerNames: [Int: String] = [:],
-    context: MeetingContext? = nil
+    context: MeetingContext? = nil,
+    meetingType: MeetingType? = nil,
+    summaryBasis: String? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -88,6 +112,48 @@ public struct MeetingRecord: Equatable, Identifiable, Sendable {
     self.eventTitle = eventTitle
     self.speakerNames = speakerNames
     self.context = context
+    self.meetingType = meetingType
+    self.summaryBasis = summaryBasis
+  }
+
+  /// A fingerprint of everything the summary depends on besides the
+  /// transcript: speaker names, meeting type, and the invite.
+  public var currentSummaryBasis: String {
+    let names = speakerNames.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+    let invite = [context?.title, context?.agenda].compactMap { $0 }
+      + (context?.attendees.map(\.displayName) ?? [])
+    return (names + [meetingType?.rawValue ?? "-"] + invite).joined(separator: "|")
+  }
+
+  /// Speakers were named, the type changed, or an invite was linked since
+  /// the summary was written.
+  public var isSummaryStale: Bool { summary != nil && summaryBasis != currentSummaryBasis }
+
+  /// This record, stamped as summarized from its current names and invite.
+  public func withSummaryBasis() -> MeetingRecord {
+    replacingSummary(summary, note: summaryNote, type: meetingType)
+  }
+
+  /// This record with a new summary (and type), stamped as current.
+  public func replacingSummary(_ summary: MeetingSummary?, note: String?, type: MeetingType?)
+    -> MeetingRecord
+  {
+    let draft = MeetingRecord(
+      id: id, startedAt: startedAt, durationSeconds: durationSeconds, segments: segments,
+      summary: summary, summaryNote: note, eventTitle: eventTitle, speakerNames: speakerNames,
+      context: context, meetingType: type)
+    return MeetingRecord(
+      id: id, startedAt: startedAt, durationSeconds: durationSeconds, segments: segments,
+      summary: summary, summaryNote: note, eventTitle: eventTitle, speakerNames: speakerNames,
+      context: context, meetingType: type, summaryBasis: draft.currentSummaryBasis)
+  }
+
+  /// What the summarizer needs besides the transcript.
+  public func summaryContext(previous: PreviousMeeting? = nil) -> SummaryContext {
+    SummaryContext(
+      title: context?.title ?? eventTitle, attendees: context?.others.map(\.displayName) ?? [],
+      organizer: context?.organizer, agenda: context?.agenda, speakerNames: speakerNames,
+      type: meetingType ?? .general, previous: previous)
   }
 
   /// "You", a speaker's given name, "Speaker N", or "Others".
@@ -188,6 +254,10 @@ public enum MeetingExporter {
       sections.append("## Agenda\n" + agenda)
     }
     if let summary = meeting.summary {
+      if let overview = summary.overview { sections.append("## Overview\n" + overview) }
+      if !summary.decisions.isEmpty {
+        sections.append("## Decisions\n" + bulleted(summary.decisions, prefix: "- "))
+      }
       sections.append("## Key points\n" + bulleted(summary.keyPoints, prefix: "- "))
       sections.append("## Action items\n" + bulleted(summary.actionItems, prefix: "- [ ] "))
     } else if let note = meeting.summaryNote {

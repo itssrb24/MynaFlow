@@ -4,9 +4,21 @@ import os
 /// The slice of the store a meeting needs. FlowStore conforms; tests fake it.
 public protocol MeetingStoring: Sendable {
   func insertMeeting(_ record: MeetingRecord) async throws
+  /// The latest earlier meeting of a recurring series, for the summary.
+  func previousMeeting(inSeries seriesKey: String, before date: Date) async -> MeetingRecord?
 }
 
-extension FlowStore: MeetingStoring {}
+extension MeetingStoring {
+  public func previousMeeting(inSeries seriesKey: String, before date: Date) async -> MeetingRecord? {
+    nil
+  }
+}
+
+extension FlowStore: MeetingStoring {
+  public func previousMeeting(inSeries seriesKey: String, before date: Date) async -> MeetingRecord? {
+    try? meetings(inSeries: seriesKey, before: date, limit: 1).first
+  }
+}
 
 public enum MeetingStopResult: Equatable, Sendable {
   /// Saved; `record.summaryNote` explains a missing summary.
@@ -202,21 +214,31 @@ public actor MeetingSession {
       "stop: segments=\(segments.count) echoesDropped=\(segments.count - merged.count) "
         + "you=\(merged.filter { $0.channel == .you }.count) "
         + "others=\(merged.filter { $0.channel == .others }.count)")
+    let attendees = context?.attendees ?? []
+    let type = MeetingType.infer(
+      title: context?.title, agenda: context?.agenda, attendeeCount: attendees.count,
+      external: MeetingType.hasExternal(attendees))
+    // A recurring meeting's summary can say what moved on since last time.
+    var previous: PreviousMeeting?
+    if summarize, let seriesKey = context?.seriesKey,
+      let last = await store.previousMeeting(inSeries: seriesKey, before: startedAt)
+    {
+      previous = PreviousMeeting(
+        overview: last.summary?.overview, openActions: last.summary?.actionItems ?? [])
+    }
+    let draft = MeetingRecord(
+      startedAt: startedAt, durationSeconds: duration, segments: merged, summary: nil,
+      summaryNote: nil, eventTitle: context?.title, context: context, meetingType: type)
     let outcome =
       summarize
-      ? await summarizer.summarize(merged)
+      ? await summarizer.summarize(merged, context: draft.summaryContext(previous: previous))
       : .unavailable(cutShortNote ?? "Not summarized.")
     guard !cancelled else { return finish(.cancelled) }
 
-    let record = MeetingRecord(
-      startedAt: startedAt,
-      durationSeconds: duration,
-      segments: merged,
-      summary: Self.summary(outcome),
-      summaryNote: Self.note(
-        outcome, writeFailure: writeFailure, untranscribed: untranscribedChunks),
-      eventTitle: context?.title,
-      context: context)
+    let record = draft.replacingSummary(
+      Self.summary(outcome),
+      note: Self.note(outcome, writeFailure: writeFailure, untranscribed: untranscribedChunks),
+      type: type)
     // Past this point the meeting is being written; a cancel can no longer
     // un-save it, so it is ignored rather than half-honoured.
     saving = true

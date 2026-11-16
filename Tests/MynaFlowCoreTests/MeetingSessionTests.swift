@@ -91,6 +91,20 @@ private actor FakeMeetingStore: MeetingStoring {
     if failInsert { throw FlowStoreError(message: "disk full") }
     meetings.append(record)
   }
+  var earlier: [MeetingRecord] = []
+  func setEarlier(_ records: [MeetingRecord]) { earlier = records }
+  func previousMeeting(inSeries seriesKey: String, before date: Date) async -> MeetingRecord? {
+    earlier.first { $0.context?.seriesKey == seriesKey && $0.startedAt < date }
+  }
+}
+
+/// Records the prompts it is given; replies with a fixed summary.
+private actor PromptRecorder: LocalLanguageModel {
+  private(set) var prompts: [String] = []
+  func generateInstruction(_ instruction: String, maxTokens: Int) async throws -> String {
+    prompts.append(instruction)
+    return "OVERVIEW:\nDone.\nKEY POINTS:\n- None\nACTION ITEMS:\n- None"
+  }
 }
 
 // MARK: - Helpers
@@ -546,6 +560,30 @@ struct MeetingSessionTests {
     }
     #expect(await transcriber.hintsSeen.first == ["Daniel Kokotajlo", "Gemma"])
     #expect(record.segments.map(\.text) == ["I asked Kokotajlo about it."])
+  }
+
+  @Test("the summary knows the meeting type and the last meeting in its series")
+  func seriesAndType() async throws {
+    let scratch = try makeScratch()
+    let store = FakeMeetingStore()
+    let last = MeetingRecord(
+      startedAt: Date(timeIntervalSince1970: 1_700_000_000), durationSeconds: 60, segments: [],
+      summary: MeetingSummary(overview: "Budget still open.", keyPoints: [], actionItems: ["Dan — draft terms"]),
+      summaryNote: nil, context: MeetingContext(title: "Weekly standup", seriesKey: "event:S"))
+    await store.setEarlier([last])
+    let model = PromptRecorder()
+    let session = makeSession(transcriber: ChunkNamingTranscriber(), store: store, scratch: scratch, model: model)
+    try await session.start(context: MeetingContext(title: "Weekly standup", seriesKey: "event:S"))
+    await session.append(frame(seconds: 1), channel: .you)
+    guard case .saved(let record) = await session.stop() else {
+      Issue.record("expected saved")
+      return
+    }
+    #expect(record.meetingType == .standup)
+    let prompt = try #require(await model.prompts.first)
+    #expect(prompt.contains("Budget still open."))
+    #expect(prompt.contains("Dan — draft terms"))
+    #expect(!record.isSummaryStale)
   }
 
   @Test("a meeting started for an invite is saved with its context")

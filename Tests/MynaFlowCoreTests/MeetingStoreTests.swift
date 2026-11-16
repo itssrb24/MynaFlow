@@ -66,6 +66,42 @@ struct MeetingStoreTests {
     let markdown = MeetingExporter.markdown(meeting)
     #expect(markdown.contains("Invited: Maurice Lee, Dan Smith"))
     #expect(markdown.contains("## Agenda\n1. Budget"))
+    let summarized = meeting.replacingSummary(
+      MeetingSummary(overview: "We agreed the budget.", decisions: ["Ship Feb 1"], keyPoints: [], actionItems: []),
+      note: nil, type: .planning)
+    let full = MeetingExporter.markdown(summarized)
+    #expect(full.contains("## Overview\nWe agreed the budget."))
+    #expect(full.contains("## Decisions\n- Ship Feb 1"))
+  }
+
+  @Test("overview, decisions and type survive a reload; a summary can be replaced, and goes stale on renames")
+  func summaryRoundTripAndStale() async throws {
+    let store = try await FlowStore.open(at: temporaryDatabaseURL())
+    var meeting = MeetingRecord(
+      startedAt: Date(timeIntervalSince1970: 1_800_000_000), durationSeconds: 60,
+      segments: [MeetingSegment(channel: .others, startSeconds: 0, text: "Hi.", speaker: 1)],
+      summary: MeetingSummary(overview: "Kickoff.", decisions: ["Ship"], keyPoints: ["A"], actionItems: []),
+      summaryNote: nil, meetingType: .planning)
+    meeting = meeting.withSummaryBasis()
+    try await store.insertMeeting(meeting)
+    var loaded = try #require(try await store.meetings(limit: 1).first)
+    #expect(loaded.summary?.overview == "Kickoff.")
+    #expect(loaded.summary?.decisions == ["Ship"])
+    #expect(loaded.meetingType == .planning)
+    #expect(!loaded.isSummaryStale)
+
+    try await store.setSpeakerName("Maurice", speaker: 1, meetingID: meeting.id)
+    loaded = try #require(try await store.meetings(limit: 1).first)
+    #expect(loaded.isSummaryStale)
+
+    let updated = loaded.replacingSummary(
+      MeetingSummary(overview: "Kickoff with Maurice.", keyPoints: [], actionItems: []), note: nil, type: .review)
+    try await store.updateSummary(of: updated)
+    loaded = try #require(try await store.meetings(limit: 1).first)
+    #expect(loaded.summary?.overview == "Kickoff with Maurice.")
+    #expect(loaded.meetingType == .review)
+    #expect(!loaded.isSummaryStale)
+    await store.close()
   }
 
   @Test("speakers on segments and names given later both survive a reload")

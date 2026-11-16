@@ -6,6 +6,10 @@ import SwiftUI
 /// transcript.
 struct MeetingSummaryPane: View {
   let meeting: MeetingRecord
+  /// Rewriting the summary right now.
+  var isUpdating = false
+  /// Rewrite the summary, optionally as another meeting type.
+  var update: (MeetingType?) -> Void = { _ in }
   let showTranscript: () -> Void
 
   var body: some View {
@@ -25,14 +29,81 @@ struct MeetingSummaryPane: View {
         .tint(Theme.Colors.textSecondary)
         .inset(padding: Theme.Spacing.md)
       }
+      if !meeting.segments.isEmpty { toolbar }
       if let summary = meeting.summary {
-        if summary.keyPoints.isEmpty && summary.actionItems.isEmpty {
+        if let overview = summary.overview {
+          Text(overview)
+            .font(.system(size: 15, weight: .regular))
+            .lineSpacing(Theme.Fonts.readingLineSpacing)
+            .foregroundStyle(Theme.Colors.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+        }
+        if summary.keyPoints.isEmpty && summary.actionItems.isEmpty && summary.decisions.isEmpty
+          && summary.overview == nil
+        {
           missing("The model found nothing to summarize in this meeting.")
         }
         if !summary.actionItems.isEmpty { actionItems(summary.actionItems) }
+        if !summary.decisions.isEmpty { decisions(summary.decisions) }
         if !summary.keyPoints.isEmpty { keyPoints(summary.keyPoints) }
       } else {
         missing(meeting.summaryNote ?? "This meeting has no summary.")
+      }
+    }
+  }
+
+  /// The meeting type (changing it rewrites the summary) and Update
+  /// summary — prominent, with a reason, when names or the invite changed.
+  private var toolbar: some View {
+    HStack(spacing: Theme.Spacing.sm) {
+      Menu {
+        ForEach(MeetingType.allCases, id: \.self) { type in
+          Button(type.displayName) { update(type) }
+        }
+      } label: {
+        Label(
+          (meeting.meetingType ?? .general).displayName,
+          systemImage: "square.grid.2x2")
+          .font(Theme.Fonts.caption)
+          .foregroundStyle(Theme.Colors.textSecondary)
+      }
+      .menuStyle(.borderlessButton)
+      .fixedSize()
+      .help("The kind of meeting the summary is written for — change it to rewrite the summary")
+      if meeting.isSummaryStale {
+        Text("Written before your latest speaker names")
+          .font(Theme.Fonts.caption)
+          .foregroundStyle(Theme.Colors.warning)
+      }
+      Spacer()
+      if isUpdating {
+        ProgressView().controlSize(.small)
+        Text("Rewriting…").font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.textSecondary)
+      } else {
+        Button(meeting.summary == nil ? "Summarize" : "Update summary") { update(nil) }
+          .buttonStyle(NeuButtonStyle(prominent: meeting.isSummaryStale))
+          .help("Rewrites the summary from the saved transcript, with the current names and invite")
+      }
+    }
+  }
+
+  private func decisions(_ items: [String]) -> some View {
+    VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+      SectionLabel(text: "Decisions")
+      ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+        HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.md) {
+          Image(systemName: "checkmark.seal")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Theme.Colors.success)
+            .accessibilityHidden(true)
+          Text(item)
+            .font(Theme.Fonts.reading)
+            .lineSpacing(Theme.Fonts.readingLineSpacing)
+            .foregroundStyle(Theme.Colors.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+        }
       }
     }
   }

@@ -286,6 +286,41 @@ final class MeetingRecorder {
     meetings = (try? await store?.meetings(limit: 200)) ?? []
   }
 
+  /// The meeting whose summary is being rewritten, if any.
+  private(set) var resummarizing: UUID?
+
+  /// Rewrites a meeting's summary from its saved transcript — after naming
+  /// speakers, linking an invite, or choosing another meeting type. No audio
+  /// is needed; it was deleted long ago.
+  func resummarize(_ meeting: MeetingRecord, as type: MeetingType? = nil) async {
+    guard resummarizing == nil, let store else { return }
+    resummarizing = meeting.id
+    defer { resummarizing = nil }
+    let type = type ?? meeting.meetingType ?? .general
+    var previous: PreviousMeeting?
+    if let key = meeting.context?.seriesKey,
+      let last = await store.previousMeeting(inSeries: key, before: meeting.startedAt)
+    {
+      previous = PreviousMeeting(overview: last.summary?.overview, openActions: last.summary?.actionItems ?? [])
+    }
+    let draft = meeting.replacingSummary(meeting.summary, note: meeting.summaryNote, type: type)
+    let outcome = await MeetingSummarizer(model: currentModel())
+      .summarize(meeting.segments, context: draft.summaryContext(previous: previous))
+    let updated: MeetingRecord
+    switch outcome {
+    case .summarized(let summary): updated = draft.replacingSummary(summary, note: nil, type: type)
+    case .unavailable(let why), .failed(let why):
+      post(why, .warning)
+      return
+    }
+    do {
+      try await store.updateSummary(of: updated)
+    } catch {
+      post("Could not save the new summary: \(error.localizedDescription)", .error)
+    }
+    await refresh()
+  }
+
   /// Attaches a calendar invite to a meeting recorded without one.
   func link(_ meeting: MeetingRecord, to event: CalendarMeeting) async {
     do {

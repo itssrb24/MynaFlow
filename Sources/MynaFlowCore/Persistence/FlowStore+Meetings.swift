@@ -15,12 +15,16 @@ extension FlowStore {
     }
     let names = record.speakerNames.isEmpty ? nil : try Self.encodeNames(record.speakerNames)
     let context = try record.context.map { String(decoding: try encoder.encode($0), as: UTF8.self) }
+    let decisions = try record.summary.map {
+      String(decoding: try encoder.encode($0.decisions), as: UTF8.self)
+    }
     try run(
       """
       INSERT INTO meetings (
         id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
-        event_title, speaker_names, context, series_key
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        event_title, speaker_names, context, series_key, overview, decisions, meeting_type,
+        summary_basis
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
       """,
       bind: { statement in
         sqlite3_bind_text(statement, 1, record.id.uuidString, -1, transient)
@@ -34,6 +38,37 @@ extension FlowStore {
         bindText(statement, 9, names)
         bindText(statement, 10, context)
         bindText(statement, 11, record.context?.seriesKey)
+        bindText(statement, 12, record.summary?.overview)
+        bindText(statement, 13, decisions)
+        bindText(statement, 14, record.meetingType?.rawValue)
+        bindText(statement, 15, record.summaryBasis)
+      })
+  }
+
+  /// Replaces a meeting's summary, note, type and basis ("Update summary").
+  public func updateSummary(of record: MeetingRecord) throws {
+    let encoder = JSONEncoder()
+    func json(_ list: [String]?) throws -> String? {
+      try list.map { String(decoding: try encoder.encode($0), as: UTF8.self) }
+    }
+    let keyPoints = try json(record.summary?.keyPoints)
+    let actionItems = try json(record.summary?.actionItems)
+    let decisions = try json(record.summary?.decisions)
+    let key = record.id.uuidString
+    try run(
+      """
+      UPDATE meetings SET key_points = ?1, action_items = ?2, summary_note = ?3, overview = ?4,
+        decisions = ?5, meeting_type = ?6, summary_basis = ?7 WHERE id = ?8
+      """,
+      bind: { statement in
+        bindText(statement, 1, keyPoints)
+        bindText(statement, 2, actionItems)
+        bindText(statement, 3, record.summaryNote)
+        bindText(statement, 4, record.summary?.overview)
+        bindText(statement, 5, decisions)
+        bindText(statement, 6, record.meetingType?.rawValue)
+        bindText(statement, 7, record.summaryBasis)
+        sqlite3_bind_text(statement, 8, key, -1, transient)
       })
   }
 
@@ -71,7 +106,7 @@ extension FlowStore {
 
   private static let meetingColumns = """
     id, started_at, duration_seconds, segments, key_points, action_items, summary_note,
-      event_title, speaker_names, context
+      event_title, speaker_names, context, overview, decisions, meeting_type, summary_basis
     """
 
   /// Names (or, with a blank name, un-names) one speaker in one meeting.
@@ -134,6 +169,10 @@ extension FlowStore {
     let summary: MeetingSummary? =
       if let points = text(statement, 4), let actions = text(statement, 5) {
         MeetingSummary(
+          overview: text(statement, 10),
+          decisions: try text(statement, 11).map {
+            try decoder.decode([String].self, from: Data($0.utf8))
+          } ?? [],
           keyPoints: try decoder.decode([String].self, from: Data(points.utf8)),
           actionItems: try decoder.decode([String].self, from: Data(actions.utf8)))
       } else {
@@ -150,7 +189,9 @@ extension FlowStore {
       speakerNames: try text(statement, 8).map(decodeNames) ?? [:],
       context: try text(statement, 9).map {
         try decoder.decode(MeetingContext.self, from: Data($0.utf8))
-      })
+      },
+      meetingType: text(statement, 12).flatMap(MeetingType.init(rawValue:)),
+      summaryBasis: text(statement, 13))
   }
 }
 
