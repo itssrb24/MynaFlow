@@ -3,7 +3,7 @@
 All notable changes to Myna Flow. Versions follow the app's
 `CFBundleShortVersionString`.
 
-## Unreleased
+## 1.2.2
 
 ### Changes
 - **New app ID: `app.mynaflow.MynaFlow`** (was `com.itssrb24.MynaFlow`), and the
