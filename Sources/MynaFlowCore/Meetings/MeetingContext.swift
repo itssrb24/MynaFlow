@@ -17,7 +17,12 @@ public struct MeetingAttendee: Codable, Equatable, Hashable, Sendable {
   /// The invite's name, else the email's local part tidied
   /// ("maurice.lee@x" → "Maurice Lee").
   public var displayName: String {
-    if let name { return name }
+    if let name {
+      // Company directories list "Rivera, Ana"; people say "Ana Rivera".
+      let parts = name.split(separator: ",", omittingEmptySubsequences: true)
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+      return parts.count == 2 ? "\(parts[1]) \(parts[0])" : name
+    }
     guard let local = email?.split(separator: "@").first else { return "Guest" }
     return local.split(whereSeparator: { ".-_+".contains($0) })
       .map { $0.prefix(1).uppercased() + $0.dropFirst() }
@@ -69,12 +74,29 @@ public enum InviteAgenda {
     "this event has a video call", "webex", "need help?", "-::~:~::",
   ]
 
+  /// Short footer lines matched whole (after trimming "<" and ":"), or as a
+  /// line's start, so ordinary agenda sentences using these words survive.
+  private static let footerLines: Set<String> = [
+    "join", "more info", "dial in by phone", "find a local number",
+    "join on a video conferencing device", "join from a video conferencing device",
+  ]
+  private static let footerPrefixes = [
+    "phone conference id", "conference id", "tenant key", "video id", "dial in by phone",
+  ]
+
+  private static func isFooter(_ line: String) -> Bool {
+    let core = line.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " \t<>:"))
+    return footerLines.contains(core) || footerPrefixes.contains(where: core.hasPrefix)
+  }
+
   public static func clean(_ notes: String?) -> String? {
     guard let notes else { return nil }
     var lines: [String] = []
     for raw in notes.components(separatedBy: .newlines) {
       let lowered = raw.lowercased()
-      if boilerplate.contains(where: lowered.contains) || isSeparator(raw) || isDialIn(raw) {
+      if boilerplate.contains(where: lowered.contains) || isSeparator(raw) || isDialIn(raw)
+        || isFooter(raw)
+      {
         continue
       }
       let line = removingURLs(raw).trimmingCharacters(in: .whitespaces)

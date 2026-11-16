@@ -58,6 +58,28 @@ struct InviteAgendaTests {
     #expect(InviteAgenda.clean(notes) == "Quick sync on budget.")
   }
 
+  @Test("a Teams dial-in footer alone is not an agenda")
+  func teamsDialIn() {
+    let notes = """
+      Join:
+
+      Dial in by phone
+
+      Find a local number<
+
+      Phone conference ID: 123 456 789#
+
+      Join on a video conferencing device
+
+      Tenant key: teams@example.vc
+
+      Video ID: 222 333 444 55
+
+      More info<
+      """
+    #expect(InviteAgenda.clean(notes) == nil)
+  }
+
   @Test("empty or boilerplate-only notes give no agenda; long notes are capped")
   func emptyAndCap() {
     #expect(InviteAgenda.clean(nil) == nil)
@@ -74,6 +96,13 @@ struct MeetingAttendeeTests {
     #expect(!MeetingAttendee.isPerson(name: "NYC-12-Boardroom (10)", email: "nyc.boardroom@resource.calendar.google.com"))
     #expect(!MeetingAttendee.isPerson(name: "Team", email: "noreply@company.com"))
     #expect(MeetingAttendee.isPerson(name: "Maurice Lee", email: "maurice@company.com"))
+  }
+
+  @Test("a directory's 'Last, First' reads as 'First Last'")
+  func lastFirst() {
+    #expect(MeetingAttendee(name: "Rivera, Ana", email: "ana@x.com").displayName == "Ana Rivera")
+    #expect(MeetingAttendee(name: "Rivera, Ana Maria", email: nil).displayName == "Ana Maria Rivera")
+    #expect(MeetingAttendee(name: "Ana Rivera", email: nil).displayName == "Ana Rivera")
   }
 
   @Test("a display name falls back to the email's local part, tidied")
