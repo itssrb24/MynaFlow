@@ -25,6 +25,20 @@ fi
 
 # Neutral build path, so no home directory is baked into the shipped binary.
 export SCRATCH="${TMPDIR:-/tmp}/mynaflow-release-build"
+# macOS purges files in $TMPDIR it considers stale (after ~3 days unused) but
+# leaves the directories, so a cached binary dependency survives as an empty
+# folder. SwiftPM's state still lists it as fetched and won't refetch, and the
+# build fails with "XCFramework Info.plist not found". Detect a gutted cache
+# and start clean; a full rebuild only costs a few minutes.
+if [[ -d "$SCRATCH/artifacts" ]]; then
+  for framework in "$SCRATCH"/artifacts/**/*.xcframework(N/); do
+    if [[ ! -f "$framework/Info.plist" ]]; then
+      echo "Release build cache was partly purged by macOS (${framework:t}); rebuilding clean."
+      rm -rf "$SCRATCH"
+      break
+    fi
+  done
+fi
 ./Scripts/build-app.sh
 
 APP="dist/Myna Flow.app"
