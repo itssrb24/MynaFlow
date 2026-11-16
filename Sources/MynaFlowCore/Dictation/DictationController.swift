@@ -79,6 +79,9 @@ public actor DictationController {
   /// Rewrites text in the style with this id; nil means "leave it alone"
   /// (model missing, timed out, or failed) — the cleaned text is inserted.
   private var polisher: @Sendable (UUID, String) async -> (text: String, styleName: String)? = { _, _ in nil }
+  /// The style every dictation is polished with; nil leaves dictations as
+  /// cleaned. A setting the user chooses — never on by default.
+  private var autoPolishStyleID: UUID?
   private var onEvent: @Sendable (DictationControllerEvent) -> Void = { _ in }
   private func onStateChange(_ state: DictationState) { onEvent(.state(state)) }
   private func onOutcome(_ outcome: DictationOutcome) { onEvent(.outcome(outcome)) }
@@ -113,6 +116,10 @@ public actor DictationController {
 
   public func setPasteWhenUnseen(_ enabled: Bool) {
     pasteWhenUnseen = enabled
+  }
+
+  public func setAutoPolishStyle(_ styleID: UUID?) {
+    autoPolishStyleID = styleID
   }
 
   public func setPolisher(
@@ -234,9 +241,14 @@ public actor DictationController {
       await failDictation("Nothing recognized")
       return
     }
-    // Polishing is always something the user asks for, by hotkey or button;
-    // a dictation is never rewritten on its own.
-    let styleApplied: String? = nil
+    // Auto-polish only when the user chose a style for it. A missing or
+    // failed model returns nil, and the cleaned text goes in unchanged —
+    // a dictation is never lost to polishing.
+    var styleApplied: String?
+    if let styleID = autoPolishStyleID, let polished = await polisher(styleID, text) {
+      text = polished.text
+      styleApplied = polished.styleName
+    }
     // The actor was suspended during transcription; a cancel may have landed
     // meanwhile. A cancelled dictation must produce no side effects at all.
     do {

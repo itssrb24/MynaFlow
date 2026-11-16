@@ -6,9 +6,11 @@ struct StylesView: View {
   @State private var selectedID: UUID?
   @State private var draft: Style?
   @State private var saveError: String?
+  @State private var shortcutError: String?
 
   var body: some View {
-    Page(title: "Styles", subtitle: "How polish rewrites a selection. Three built-ins, unlimited custom.") {
+    Page(title: "Styles", subtitle: "How polish rewrites your words. Three built-ins, unlimited custom.") {
+      AutoPolishCard(coordinator: coordinator)
       HStack(alignment: .top, spacing: Theme.Spacing.lg) {
         list.frame(width: 240)
         editor.frame(maxWidth: .infinity, alignment: .topLeading)
@@ -43,9 +45,7 @@ struct StylesView: View {
                 }
               }
               Spacer()
-              if let slot = style.hotkeySlot,
-                let shortcut = HotkeyAction.forSlot(slot).flatMap { coordinator.hotkeyConfiguration[$0] }
-              {
+              if let shortcut = coordinator.shortcut(for: style) {
                 Keycap(label: shortcut.keycapLabel)
               }
             }
@@ -106,19 +106,8 @@ struct StylesView: View {
         }
         .buttonStyle(NeuButtonStyle())
 
-        SectionLabel(text: "Hotkey slot")
-        Picker("Slot", selection: bound.hotkeySlot) {
-          Text("None").tag(Int?.none)
-          ForEach(1...5, id: \.self) { slot in
-            let label = HotkeyAction.forSlot(slot).flatMap { coordinator.hotkeyConfiguration[$0] }?.keycapLabel ?? "unbound"
-            Text("Slot \(slot) · \(label)").tag(Int?.some(slot))
-          }
-        }
-        .labelsHidden()
-        .frame(maxWidth: 260)
-        Text("Slots are bound to keys in Hotkeys. Assigning a slot here unassigns any other style using it.")
-          .font(Theme.Fonts.caption)
-          .foregroundStyle(Theme.Colors.textTertiary)
+        SectionLabel(text: "Shortcut")
+        shortcutRow(for: bound.wrappedValue)
 
         if let saveError {
           Text(saveError).font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.danger)
@@ -169,9 +158,101 @@ struct StylesView: View {
     }
   }
 
+  /// Click, press keys, done — the slot behind it is picked for you.
+  @ViewBuilder
+  private func shortcutRow(for style: Style) -> some View {
+    let isSaved = coordinator.styles.contains { $0.id == style.id }
+    let current = coordinator.styles.first { $0.id == style.id }.flatMap(coordinator.shortcut(for:))
+    HStack(spacing: Theme.Spacing.sm) {
+      HotkeyRecorder(
+        shortcut: current ?? HotkeyShortcut(keyCode: 0, modifiers: 0, keyLabel: "Record shortcut")
+      ) { captured in
+        setShortcut(captured, for: style.id)
+      }
+      .disabled(!isSaved)
+      if current != nil {
+        Button {
+          setShortcut(nil, for: style.id)
+        } label: {
+          Image(systemName: "xmark.circle.fill")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Theme.Colors.textTertiary)
+        .help("Remove shortcut")
+        .accessibilityLabel("Remove shortcut")
+      }
+    }
+    Text(
+      shortcutError
+        ?? (isSaved
+          ? "Select text in any app and press it to rewrite the selection in this style."
+          : "Save the style first, then record its shortcut.")
+    )
+    .font(Theme.Fonts.caption)
+    .foregroundStyle(shortcutError == nil ? Theme.Colors.textTertiary : Theme.Colors.danger)
+  }
+
+  private func setShortcut(_ shortcut: HotkeyShortcut?, for styleID: UUID) {
+    Task {
+      shortcutError = await coordinator.setStyleShortcut(shortcut, for: styleID)
+      // Keep the open draft's slot in step, so Save can't put back an old one.
+      draft?.hotkeySlot = coordinator.styles.first { $0.id == styleID }?.hotkeySlot
+    }
+  }
+
   private func select(_ style: Style) {
     selectedID = style.id
     draft = style
     saveError = nil
+    shortcutError = nil
+  }
+}
+
+/// "Polish every dictation with …": off unless the user picks a style. Says
+/// plainly when no model is installed, since the choice then does nothing.
+private struct AutoPolishCard: View {
+  let coordinator: AppCoordinator
+
+  var body: some View {
+    HStack(alignment: .center, spacing: Theme.Spacing.md) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Polish every dictation")
+          .font(Theme.Fonts.bodyStrong)
+          .foregroundStyle(Theme.Colors.textPrimary)
+        Text(note)
+          .font(Theme.Fonts.caption)
+          .foregroundStyle(
+            coordinator.autoPolishStyleID != nil && !coordinator.polishAvailable
+              ? Theme.Colors.warning : Theme.Colors.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      Spacer(minLength: Theme.Spacing.md)
+      Picker("Style", selection: selection) {
+        Text("Off").tag(UUID?.none)
+        Divider()
+        ForEach(coordinator.styles) { style in
+          Text(style.name).tag(UUID?.some(style.id))
+        }
+      }
+      .labelsHidden()
+      .frame(width: 180)
+    }
+    .raised()
+  }
+
+  private var selection: Binding<UUID?> {
+    Binding(
+      get: { coordinator.autoPolishStyleID },
+      set: { coordinator.setAutoPolishStyle($0) })
+  }
+
+  private var note: String {
+    if coordinator.autoPolishStyleID == nil {
+      return "Off: dictations are cleaned up (filler words, punctuation) but not rewritten."
+    }
+    if !coordinator.polishAvailable {
+      return "Needs a polish model — install one in Models. Until then, dictations are only cleaned up."
+    }
+    return "Each dictation is rewritten on this Mac before it's typed, adding a second or two. If polishing fails, the cleaned text is typed instead."
   }
 }

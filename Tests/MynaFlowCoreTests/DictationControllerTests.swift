@@ -158,7 +158,7 @@ struct DictationControllerSettingsTests {
     #expect(recorder.blindPasteFlags.last == false)
   }
 
-  @Test("A dictation is never polished on its own")
+  @Test("With no auto-polish style chosen, a dictation is not polished")
   func noAutomaticPolish() async throws {
     let store = FakeStore()
     let recorder = Recorder()
@@ -168,6 +168,68 @@ struct DictationControllerSettingsTests {
     await controller.finishRecording(frames: someFrames())
     #expect(recorder.insertedTexts == ["Hello there."])
     #expect(await store.records.first?.styleApplied == nil)
+  }
+
+  @Test("With an auto-polish style, the polished text is typed and the style recorded")
+  func autoPolishApplies() async throws {
+    let store = FakeStore()
+    let recorder = Recorder()
+    let controller = makeController(store: store, recorder: recorder)
+    let style = UUID()
+    let asked = StyleCapture()
+    await controller.setPolisher { id, text in
+      asked.record(id, text)
+      return (text: "Greetings.", styleName: "Formal")
+    }
+    await controller.setAutoPolishStyle(style)
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    #expect(asked.calls.first?.0 == style)
+    #expect(asked.calls.first?.1 == "Hello there.")
+    #expect(recorder.insertedTexts == ["Greetings."])
+    #expect(await store.records.first?.styleApplied == "Formal")
+    #expect(await store.records.first?.cleanedText == "Hello there.")
+  }
+
+  @Test("If polishing fails, the cleaned text is typed instead — nothing is lost")
+  func autoPolishFallsBack() async throws {
+    let store = FakeStore()
+    let recorder = Recorder()
+    let controller = makeController(store: store, recorder: recorder)
+    await controller.setPolisher { _, _ in nil }
+    await controller.setAutoPolishStyle(UUID())
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    #expect(recorder.insertedTexts == ["Hello there."])
+    #expect(await store.records.first?.styleApplied == nil)
+  }
+
+  @Test("Turning auto-polish off again stops polishing")
+  func autoPolishOff() async throws {
+    let store = FakeStore()
+    let recorder = Recorder()
+    let controller = makeController(store: store, recorder: recorder)
+    await controller.setPolisher { _, _ in (text: "Greetings.", styleName: "Formal") }
+    await controller.setAutoPolishStyle(UUID())
+    await controller.setAutoPolishStyle(nil)
+    _ = await controller.startDictation(mode: .hold)
+    await controller.finishRecording(frames: someFrames())
+    #expect(recorder.insertedTexts == ["Hello there."])
+  }
+}
+
+private final class StyleCapture: @unchecked Sendable {
+  private let lock = NSLock()
+  private var _calls: [(UUID, String)] = []
+  func record(_ id: UUID, _ text: String) {
+    lock.lock()
+    _calls.append((id, text))
+    lock.unlock()
+  }
+  var calls: [(UUID, String)] {
+    lock.lock()
+    defer { lock.unlock() }
+    return _calls
   }
 }
 

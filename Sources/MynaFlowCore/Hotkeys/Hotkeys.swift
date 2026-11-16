@@ -191,3 +191,17 @@ extension [HotkeyAction: HotkeyShortcut] {
     return [String: HotkeyShortcut](uniqueKeysWithValues: pairs)
   }
 }
+
+/// Styles get shortcuts through five hotkey slots. The user never picks a
+/// slot: recording a shortcut on a style reuses its slot or takes a free one.
+public enum StyleShortcuts {
+  public static let slots = 1...5
+
+  /// The style's own slot, else the first no other style holds; nil when all
+  /// five are taken.
+  public static func slot(for styleID: UUID, in styles: [Style]) -> Int? {
+    if let own = styles.first(where: { $0.id == styleID })?.hotkeySlot { return own }
+    let taken = Set(styles.compactMap(\.hotkeySlot))
+    return slots.first { !taken.contains($0) }
+  }
+}

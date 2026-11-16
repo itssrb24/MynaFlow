@@ -73,6 +73,9 @@ final class AppCoordinator {
   private(set) var inputDevices: [AudioInputDevice] = []
   private(set) var selectedInputUID: String?
   private(set) var cleanupEnabled = true
+  /// Style every dictation is polished with; nil means dictations are only
+  /// cleaned. Off until the user picks one.
+  private(set) var autoPolishStyleID: UUID?
   private(set) var modelStates: [String: ModelInstallState] = [:]
   let hardware = HardwareProfile.current()
   private(set) var vocabulary: [VocabularyTerm] = []
@@ -187,6 +190,9 @@ final class AppCoordinator {
         .flatMap { $0.isEmpty ? nil : $0 }
       capture.preferredDeviceUID = selectedInputUID
       cleanupEnabled = (try? await store.setting(forKey: "cleanup_enabled")) != "0"
+      autoPolishStyleID = (try? await store.setting(forKey: "auto_polish_style")).flatMap {
+        UUID(uuidString: $0)
+      }
       if let wpm = try? await store.setting(forKey: "typing_wpm"), let value = Double(wpm), value > 0 {
         typingWPM = value
       }
@@ -215,9 +221,6 @@ final class AppCoordinator {
       }
 
       let controller = makeController(store: store, scratch: paths.scratch)
-      await controller.setCleanupEnabled(cleanupEnabled)
-      await controller.setTerminalPeriod(terminalPeriod)
-      await controller.setPasteWhenUnseen(pasteWhenUnseen)
       session = makeSession(controller: controller, scratch: paths.scratch)
       await installController(controller)
       await refreshStyles()
@@ -357,7 +360,13 @@ final class AppCoordinator {
         return BiasTerms.sanitize(terms)
       }
       await controller.setPolisher { [weak self] styleID, text in
-        await self?.polishText(text, styleID: styleID)
+        await MainActor.run {
+          guard let self, self.polishAvailable,
+            let style = self.styles.first(where: { $0.id == styleID })
+          else { return }
+          self.indicator.display = .polishing(style: style.name)
+        }
+        return await self?.polishText(text, styleID: styleID)
       }
     }
     return controller
@@ -751,7 +760,6 @@ final class AppCoordinator {
   private func rebuildControllerForVocabulary() async {
     guard let store, let paths else { return }
     let controller = makeController(store: store, scratch: paths.scratch)
-    await controller.setCleanupEnabled(cleanupEnabled)
     await installController(controller)
   }
 
@@ -789,7 +797,6 @@ final class AppCoordinator {
     try? await store?.setSetting(choice.rawValue, forKey: "engine")
     guard let store, let paths else { return }
     let controller = makeController(store: store, scratch: paths.scratch)
-    await controller.setCleanupEnabled(cleanupEnabled)
     await installController(controller)
     Task.detached(priority: .utility) { await controller.prewarm() }
   }
@@ -1146,11 +1153,53 @@ final class AppCoordinator {
   }
 
   func deleteStyle(id: UUID) async {
+    if autoPolishStyleID == id { setAutoPolishStyle(nil) }
     await persist("delete style") { try await store?.deleteStyle(id: id) }
     await refreshStyles()
   }
 
   // MARK: Hotkeys
+
+  /// The shortcut that polishes a selection with `style`, if it has one.
+  func shortcut(for style: Style) -> HotkeyShortcut? {
+    style.hotkeySlot.flatMap(HotkeyAction.forSlot).flatMap { hotkeyConfiguration[$0] }
+  }
+
+  /// Binds (or, with nil, clears) a style's shortcut. The slot behind it is
+  /// chosen here, never by the user. Returns a message when it can't be set.
+  /// Only the slot is written to the style, so unsaved edits in an open
+  /// editor are not saved along with it.
+  func setStyleShortcut(_ shortcut: HotkeyShortcut?, for styleID: UUID) async -> String? {
+    guard var stored = styles.first(where: { $0.id == styleID }) else {
+      return "Save the style first, then set its shortcut."
+    }
+    guard let shortcut else {
+      if let action = stored.hotkeySlot.flatMap(HotkeyAction.forSlot) {
+        updateHotkey(action, shortcut: nil)
+      }
+      stored.hotkeySlot = nil
+      return await saveSlot(stored)
+    }
+    guard let slot = StyleShortcuts.slot(for: styleID, in: styles),
+      let action = HotkeyAction.forSlot(slot)
+    else { return "All five style shortcuts are in use. Clear one first." }
+    if hotkeyConfiguration.conflicts(replacing: action, with: shortcut) {
+      return "\(shortcut.displayName) is already used by another shortcut."
+    }
+    updateHotkey(action, shortcut: shortcut)
+    guard stored.hotkeySlot != slot else { return nil }
+    stored.hotkeySlot = slot
+    return await saveSlot(stored)
+  }
+
+  private func saveSlot(_ style: Style) async -> String? {
+    do {
+      try await saveStyle(style)
+      return nil
+    } catch {
+      return "Couldn't save the shortcut: \(error.localizedDescription)"
+    }
+  }
 
   func updateHotkey(_ action: HotkeyAction, shortcut: HotkeyShortcut?) {
     hotkeyConfiguration[action] = shortcut
@@ -1315,6 +1364,17 @@ final class AppCoordinator {
     Task {
       await languageProvider?.setIdleTimeout(TimeInterval(idleUnloadMinutes * 60))
       await persist("save idle unload") { try await store?.setSetting("\(idleUnloadMinutes)", forKey: "idle_unload_minutes") }
+    }
+  }
+
+  /// Chooses the style every dictation is polished with, or nil for none.
+  func setAutoPolishStyle(_ styleID: UUID?) {
+    autoPolishStyleID = styleID
+    Task {
+      await controller?.setAutoPolishStyle(styleID)
+      await persist("save auto-polish style") {
+        try await store?.setSetting(styleID?.uuidString ?? "", forKey: "auto_polish_style")
+      }
     }
   }
 
@@ -1570,7 +1630,14 @@ final class AppCoordinator {
 
   /// Swaps the dictation controller (engine or rules changed). The session
   /// applies it between dictations, never mid-flight.
+  /// Every controller gets every current setting. Rebuilds (engine switch,
+  /// vocabulary change) used to apply only cleanup, silently resetting the
+  /// terminal period and paste-when-unseen until the next launch.
   private func installController(_ controller: DictationController) async {
+    await controller.setCleanupEnabled(cleanupEnabled)
+    await controller.setTerminalPeriod(terminalPeriod)
+    await controller.setPasteWhenUnseen(pasteWhenUnseen)
+    await controller.setAutoPolishStyle(autoPolishStyleID)
     self.controller = controller
     await attachObservers(to: controller)
     session?.replaceController(controller)

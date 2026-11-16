@@ -20,9 +20,12 @@ struct HotkeysView: View {
 
       VStack(alignment: .leading, spacing: Theme.Spacing.md) {
         SectionLabel(text: "Polish styles")
-        ForEach(HotkeyAction.styleActions, id: \.self) { action in
-          row(action, note: styleNote(for: action))
+        ForEach(coordinator.styles) { style in
+          styleRow(style)
         }
+        Text("Select text in any app and press a style's shortcut to rewrite it. Up to five styles can have one.")
+          .font(Theme.Fonts.caption)
+          .foregroundStyle(Theme.Colors.textTertiary)
         Text("⌃-based chords are recommended: the global monitor observes keys and cannot swallow them, so ⌥-chords would type a character over your selection.")
           .font(Theme.Fonts.caption)
           .foregroundStyle(Theme.Colors.textTertiary)
@@ -77,11 +80,34 @@ struct HotkeysView: View {
     coordinator.updateHotkey(action, shortcut: shortcut)
   }
 
-  private func styleNote(for action: HotkeyAction) -> String {
-    guard let slot = action.styleSlot else { return "" }
-    if let style = coordinator.styles.first(where: { $0.hotkeySlot == slot }) {
-      return "Polishes the selection as “\(style.name)”."
+  /// One row per style, named after it; the slot behind it never shows.
+  private func styleRow(_ style: Style) -> some View {
+    let current = coordinator.shortcut(for: style)
+    return HStack(alignment: .center, spacing: Theme.Spacing.md) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(style.name)
+          .font(Theme.Fonts.bodyStrong)
+          .foregroundStyle(Theme.Colors.textPrimary)
+        Text(style.builtin ? "Built-in style" : "Custom style")
+          .font(Theme.Fonts.caption)
+          .foregroundStyle(Theme.Colors.textTertiary)
+      }
+      Spacer()
+      HotkeyRecorder(
+        shortcut: current ?? HotkeyShortcut(keyCode: 0, modifiers: 0, keyLabel: "Unbound")
+      ) { captured in
+        Task { conflict = await coordinator.setStyleShortcut(captured, for: style.id) }
+      }
+      if current != nil {
+        Button {
+          Task { conflict = await coordinator.setStyleShortcut(nil, for: style.id) }
+        } label: {
+          Image(systemName: "xmark.circle.fill")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Theme.Colors.textTertiary)
+        .help("Unbind")
+      }
     }
-    return "No style assigned — pick one in Styles."
   }
 }
